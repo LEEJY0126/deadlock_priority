@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+*.pyo
+.ipynb_checkpoints/
+# regeneratable imitation dataset (use scripts/gen_dataset.py)
+data/
