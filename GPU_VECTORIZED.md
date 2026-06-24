@@ -65,6 +65,34 @@ sanity (open map, 64 eps): vec success=100%  cpu success=92%
    on hard mazes it would resolve fewer deadlocks than real PIBT (the sanity open
    map is easy: 100% vs CPU 92%). This path trades solver quality for throughput.
 
+## RL integration + transfer A/B
+
+`train_rl.py --engine vec` routes the rollouts through `VecSim` instead of CPU
+PIBT (`src/train/rl_vec.py`; `build_batch` now caches BFS/neighbor tables so the
+K fields sharing an instance pay the CPU-side BFS once, not K times). The
+REINFORCE math is unchanged — only the reward source differs.
+
+The key question: does a field trained against the *approximate* solver still
+work under *real* PIBT? Trained 150 iters from `imitation.pt` with `--engine vec`,
+then evaluated with the PIBT `evaluate.py` (60 instances/kind):
+
+| map | MST baseline | cpu-trained (`rl.pt`) | vec-trained (`rl_vec.pt`) |
+|-----|:------------:|:---------------------:|:-------------------------:|
+| forest | 90.0% | 91.7% | 91.7% |
+| wide   | 81.7% | 90.0% | 86.7% |
+| narrow | 30.0% | 46.7% | 45.0% |
+
+**Transfer holds.** The vec-trained field beats the MST heuristic on all three
+under real PIBT (wide +5.0, narrow +15.0), landing just behind the cpu-trained
+model (wide −3.3, narrow −1.7) — a small quality cost consistent with optimizing
+against the non-backtracking approximation. Training took **57 s vs 258 s** for
+the serial CPU engine (in-loop PIBT evals included in both).
+
+Takeaway: `--engine vec` is a usable *fast trainer* whose product still transfers
+to the exact solver, but at this scale (E≈64) its edge over the CPU `--workers`
+pool is modest and it trades a little final quality. It becomes compelling only
+with much larger env counts (see scaling above).
+
 ## Recommendation
 
 At the **current scale (≈32 envs / RL step), CPU multiprocessing (`--workers`,

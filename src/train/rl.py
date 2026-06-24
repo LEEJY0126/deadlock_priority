@@ -37,12 +37,13 @@ def episode_reward(gmap, samples, field, max_steps):
 
 def rl_step(model, maps, opt, device, K=8, sigma=0.5, n_agents=8,
             n_samples=2, max_steps=400, rng=None, anchor=None, anchor_w=0.0,
-            pool=None):
+            pool=None, engine="cpu"):
     """One optimization step over a batch of maps. Returns stats dict.
 
-    The B*K episode rollouts are independent; pass a multiprocessing ``pool`` to
-    evaluate them in parallel. The gradient math is identical either way -- only
-    the reward evaluation is distributed.
+    The B*K episode rollouts are independent. ``engine`` selects how rewards are
+    evaluated; the gradient math is identical regardless:
+      - "cpu": exact PIBT via episode_reward (optionally over a ``pool``).
+      - "vec": GPU-batched VecSim (approximate, non-backtracking -- see rl_vec).
     """
     rng = rng or np.random.default_rng()
     free_masks, feats_list, samples_list = [], [], []
@@ -58,9 +59,9 @@ def rl_step(model, maps, opt, device, K=8, sigma=0.5, n_agents=8,
     logits = model(feats, return_logits=True)         # (B,H,W) pre-activation
     B = len(maps)
 
-    # Sample K perturbed fields per map and collect every (b,k) rollout as a flat
-    # task so they can all be dispatched to the pool at once.
-    pre_list, fmask_list, tasks = [], [], []
+    # Sample K perturbed fields per map. Keep the per-map (K,H,W) field arrays for
+    # the vec engine, and a flat (b,k) task list for the cpu engine.
+    pre_list, fmask_list, fields_list, tasks = [], [], [], []
     for b in range(B):
         a = logits[b]                                 # (H,W) requires grad
         fmask = free[b]
@@ -70,14 +71,20 @@ def rl_step(model, maps, opt, device, K=8, sigma=0.5, n_agents=8,
         pre_list.append(pre)
         fmask_list.append(fmask)
         fields_np = fields.cpu().numpy()
+        fields_list.append(fields_np)
         for k in range(K):
             tasks.append((maps[b], samples_list[b], fields_np[k], max_steps))
 
-    if pool is not None:
-        rewards_flat = pool.starmap(episode_reward, tasks)
+    if engine == "vec":
+        from .rl_vec import vec_rewards
+        rewards_flat = vec_rewards(maps, samples_list, fields_list,
+                                   n_agents, max_steps, device)
+    elif pool is not None:
+        rewards_flat = np.asarray(pool.starmap(episode_reward, tasks),
+                                  dtype=np.float64).reshape(B, K)
     else:
-        rewards_flat = [episode_reward(*t) for t in tasks]
-    rewards_flat = np.asarray(rewards_flat, dtype=np.float64).reshape(B, K)
+        rewards_flat = np.asarray([episode_reward(*t) for t in tasks],
+                                  dtype=np.float64).reshape(B, K)
 
     total_loss = 0.0
     all_rewards = []

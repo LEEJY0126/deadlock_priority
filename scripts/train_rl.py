@@ -47,7 +47,9 @@ def main():
     ap.add_argument("--no_pool", action="store_true",
                     help="ablation: full-res CNN (ignored if --init sets the arch)")
     ap.add_argument("--workers", type=int, default=0,
-                    help="parallel rollout workers (0/1 = serial)")
+                    help="parallel rollout workers (0/1 = serial; cpu engine only)")
+    ap.add_argument("--engine", choices=["cpu", "vec"], default="cpu",
+                    help="reward rollouts: cpu=exact PIBT, vec=GPU-batched approx")
     args = ap.parse_args()
 
     dev = args.device
@@ -84,9 +86,11 @@ def main():
     # Rollouts are pure-CPU NumPy and independent across (map, sample); a spawn
     # pool parallelizes them without touching the parent's CUDA context.
     pool = None
-    if args.workers and args.workers > 1:
+    if args.workers and args.workers > 1 and args.engine == "cpu":
         pool = mp.get_context("spawn").Pool(args.workers)
         print(f"using {args.workers} rollout workers")
+    if args.engine == "vec":
+        print("using GPU-vectorized rollout engine (approximate solver)")
 
     try:
         ema = None
@@ -95,7 +99,8 @@ def main():
             maps = sample_maps(args.batch_maps, args.size, rng)
             stats = rl_step(model, maps, opt, dev, K=args.K, sigma=args.sigma,
                             n_agents=args.n_agents, rng=rng,
-                            anchor=anchor, anchor_w=args.anchor_w, pool=pool)
+                            anchor=anchor, anchor_w=args.anchor_w, pool=pool,
+                            engine=args.engine)
             ema = stats["reward"] if ema is None else 0.95 * ema + 0.05 * stats["reward"]
             if it % 10 == 0:
                 print(f"it {it:4d}  loss {stats['loss']:+.3f}  reward {stats['reward']:+.3f}  ema {ema:+.3f}")

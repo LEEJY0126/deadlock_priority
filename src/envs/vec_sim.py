@@ -58,6 +58,10 @@ def build_batch(entries, device="cuda"):
 
     All maps must share H, W (same grid size). starts/goals are lists of (r,c).
     `field` is an (H, W) priority field (raw; normalized here like simulator.py).
+
+    Neighbor tables (per map) and BFS distance fields (per map+goals) are cached
+    by object identity, so RL batches where K fields share an instance pay the
+    CPU-side BFS/neighbor cost once per instance instead of once per env.
     """
     E = len(entries)
     g0 = entries[0][0]
@@ -73,22 +77,29 @@ def build_batch(entries, device="cuda"):
     nbr_valid = np.zeros((E, HW, 5), bool)
     distA = np.full((E, A, HW), INF, np.float32)
 
+    nbr_cache: dict = {}   # id(gmap) -> (ni, nv, free_row)
+    dist_cache: dict = {}  # (id(gmap), goals_key) -> (A, HW) distances
     for e, (gmap, starts, goals, fld) in enumerate(entries):
         assert gmap.H == H and gmap.W == W, "all maps must share grid size"
         assert len(starts) == A and len(goals) == A
-        ni, nv = _neighbor_tables(gmap.occ)
-        nbr_idx[e], nbr_valid[e] = ni, nv
-        fr = (gmap.occ == 0).reshape(-1)
-        free[e] = fr
+        key = id(gmap)
+        if key not in nbr_cache:
+            ni, nv = _neighbor_tables(gmap.occ)
+            nbr_cache[key] = (ni, nv, (gmap.occ == 0).reshape(-1))
+        ni, nv, fr = nbr_cache[key]
+        nbr_idx[e], nbr_valid[e], free[e] = ni, nv, fr
         # normalize field over free cells (matches Simulator.run)
         vals = fld[gmap.occ == 0]
         f = (fld - vals.mean()) / (vals.std() + 1e-6)
         field[e] = (f.reshape(-1) * fr).astype(np.float32)
+        gkey = (key, tuple(goals))
+        if gkey not in dist_cache:
+            dist_cache[gkey] = np.stack(
+                [gmap.bfs_dist(gl).reshape(-1).astype(np.float32) for gl in goals])
+        distA[e] = dist_cache[gkey]
         for a, (s, gl) in enumerate(zip(starts, goals)):
             pos[e, a] = s[0] * W + s[1]
             goal[e, a] = gl[0] * W + gl[1]
-            d = gmap.bfs_dist(gl).reshape(-1).astype(np.float32)
-            distA[e, a] = d
 
     t = lambda x: torch.from_numpy(x).to(device)
     return {
