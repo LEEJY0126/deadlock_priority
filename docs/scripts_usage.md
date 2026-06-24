@@ -176,12 +176,21 @@ trails, goals as matching-color stars. Saves a GIF (or shows a live window).
 | `--out` | str | `runs/sim.gif` | Output GIF path |
 | `--fps` | int | `5` | Animation frames per second |
 | `--trail` | int | `8` | Trail length in steps (0 = off) |
+| `--raw` | flag | off | Show raw priority values + colorbar (default: per-map z-score) |
 | `--live` | flag | off | Show a window instead of saving |
 | `--device` | str | `cuda`/`cpu` | Compute device |
+
+By default the background is the per-map **z-scored** field (best for comparing
+the *pattern* of MST vs learned, which live on different scales). `--raw` shows
+the **actual priority values** with a per-panel colorbar — useful to read the
+true magnitudes (e.g. MST integer levels ~1–19 vs learned softplus ~0.1–1.2).
 
 ```bash
 # narrow-maze case where MST deadlocks but the learned field solves it:
 python scripts/simulate.py --ckpt runs/rl.pt --map narrow --seed 10 --max_steps 60
+
+# same, but show raw priority values with a colorbar:
+python scripts/simulate.py --ckpt runs/rl.pt --map narrow --seed 10 --max_steps 60 --raw
 ```
 
 Both panels print final `success / makespan / flowtime`. Tip: use `evaluate.py`

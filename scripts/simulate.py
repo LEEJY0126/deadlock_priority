@@ -27,11 +27,15 @@ def make_map(kind, size, rng):
     return maze(size, size, corridor=2 if kind == "wide" else 1, rng=rng)
 
 
-def field_background(field, occ):
-    """Per-map z-scored field with obstacles as NaN (drawn grey)."""
+def field_background(field, occ, raw=False):
+    """Field as an image with obstacles as NaN (drawn grey).
+
+    raw=False: per-map z-score (good contrast for comparing patterns).
+    raw=True : the actual priority values (use a colorbar to read the scale).
+    """
     free = occ == 0
     v = field.astype(float).copy()
-    if free.sum():
+    if not raw and free.sum():
         v = (v - v[free].mean()) / (v[free].std() + 1e-6)
     v[~free] = np.nan
     return v
@@ -54,6 +58,8 @@ def main():
     ap.add_argument("--out", default="runs/sim.gif")
     ap.add_argument("--fps", type=int, default=5)
     ap.add_argument("--trail", type=int, default=8, help="trail length in steps (0=off)")
+    ap.add_argument("--raw", action="store_true",
+                    help="show raw priority values + colorbar (default: per-map z-score)")
     ap.add_argument("--live", action="store_true", help="show a window instead of saving")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     args = ap.parse_args()
@@ -85,7 +91,10 @@ def main():
 
     scatters, trails = [], []
     for ax, (name, fld, res) in zip(axes, results):
-        ax.imshow(field_background(fld, g.occ), cmap="viridis")
+        im = ax.imshow(field_background(fld, g.occ, raw=args.raw), cmap="viridis")
+        if args.raw:
+            cb = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+            cb.set_label("raw priority")
         # goals as stars
         gy = [gl[0] for gl in goals]
         gx = [gl[1] for gl in goals]
