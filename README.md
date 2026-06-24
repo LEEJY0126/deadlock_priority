@@ -152,11 +152,13 @@ Reproduce: `python scripts/evaluate.py --ckpt runs/rl.pt --n_per_kind 12 --n_ins
 
 `scripts/simulate.py` runs the *same* instance under both fields. In this
 narrow-maze case (`--seed 10`) the MST priority **deadlocks** (6/8 agents home)
-while the learned field **solves it in 21 steps** (8/8):
+while the learned field **solves it in 21 steps** (8/8). The top row shows the
+raw priority maps (MST integer levels vs the learned smooth field); the bottom
+row animates the agents:
 
-![MST vs learned priority on a narrow maze](runs/sim_narrow_seed10.gif)
+![MST vs learned priority on a narrow maze](runs/sim_narrow_seed10_raw.gif)
 
-Reproduce: `python scripts/simulate.py --ckpt runs/rl.pt --map narrow --seed 10 --max_steps 60`
+Reproduce: `python scripts/simulate.py --ckpt runs/rl.pt --map narrow --seed 10 --max_steps 60 --raw`
 
 ## Limitations / next steps
 

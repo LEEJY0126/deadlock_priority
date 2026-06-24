@@ -176,14 +176,15 @@ trails, goals as matching-color stars. Saves a GIF (or shows a live window).
 | `--out` | str | `runs/sim.gif` | Output GIF path |
 | `--fps` | int | `5` | Animation frames per second |
 | `--trail` | int | `8` | Trail length in steps (0 = off) |
-| `--raw` | flag | off | Show raw priority values + colorbar (default: per-map z-score) |
+| `--raw` | flag | off | Add a top row of raw-priority-map subplots (values annotated per cell) |
 | `--live` | flag | off | Show a window instead of saving |
 | `--device` | str | `cuda`/`cpu` | Compute device |
 
-By default the background is the per-map **z-scored** field (best for comparing
-the *pattern* of MST vs learned, which live on different scales). `--raw` shows
-the **actual priority values** with a per-panel colorbar — useful to read the
-true magnitudes (e.g. MST integer levels ~1–19 vs learned softplus ~0.1–1.2).
+The simulation background is the per-map **z-scored** field (best contrast for
+watching agents). `--raw` adds a **top row of raw-priority-map subplots** with the
+**actual priority values labeled in each cell** — so you can read true magnitudes
+(MST integer levels vs learned softplus decimals) while the simulation animates
+below. Layout becomes 2 rows × (1 or 2) columns.
 
 ```bash
 # narrow-maze case where MST deadlocks but the learned field solves it:

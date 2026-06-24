@@ -31,7 +31,7 @@ def field_background(field, occ, raw=False):
     """Field as an image with obstacles as NaN (drawn grey).
 
     raw=False: per-map z-score (good contrast for comparing patterns).
-    raw=True : the actual priority values (use a colorbar to read the scale).
+    raw=True : the actual priority values.
     """
     free = occ == 0
     v = field.astype(float).copy()
@@ -39,6 +39,20 @@ def field_background(field, occ, raw=False):
         v = (v - v[free].mean()) / (v[free].std() + 1e-6)
     v[~free] = np.nan
     return v
+
+
+def draw_raw_map(ax, field, occ, fontsize):
+    """Static raw-priority-map subplot: raw values as color + per-cell labels."""
+    ax.imshow(field_background(field, occ, raw=True), cmap="viridis")
+    H, W = occ.shape
+    for r in range(H):
+        for c in range(W):
+            if occ[r, c] != 0:
+                continue
+            v = field[r, c]
+            txt = f"{v:.0f}" if abs(v - round(v)) < 0.05 else f"{v:.1f}"
+            ax.text(c, r, txt, ha="center", va="center", fontsize=fontsize, color="w")
+    ax.set_xticks([]); ax.set_yticks([])
 
 
 def run(g, starts, goals, field, max_steps):
@@ -86,15 +100,22 @@ def main():
     T = max(len(r.positions_log) for _, _, r in results)
 
     colors = plt.cm.hsv(np.linspace(0, 1, args.n_agents, endpoint=False))
-    fig, axes = plt.subplots(1, len(results), figsize=(6 * len(results), 6.2), squeeze=False)
-    axes = axes[0]
+    ncol = len(results)
+    # with --raw, a top row shows the static raw priority map; the simulation
+    # always animates in the bottom row.
+    nrow = 2 if args.raw else 1
+    fig, axgrid = plt.subplots(nrow, ncol, figsize=(6 * ncol, 6.2 * nrow), squeeze=False)
+    sim_axes = axgrid[-1]
+
+    if args.raw:
+        fontsize = max(2.5, 90.0 / args.size)
+        for col, (name, fld, res) in enumerate(results):
+            draw_raw_map(axgrid[0][col], fld, g.occ, fontsize)
+            axgrid[0][col].set_title(f"{name}: raw priority map")
 
     scatters, trails = [], []
-    for ax, (name, fld, res) in zip(axes, results):
-        im = ax.imshow(field_background(fld, g.occ, raw=args.raw), cmap="viridis")
-        if args.raw:
-            cb = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-            cb.set_label("raw priority")
+    for ax, (name, fld, res) in zip(sim_axes, results):
+        ax.imshow(field_background(fld, g.occ, raw=False), cmap="viridis")
         # goals as stars
         gy = [gl[0] for gl in goals]
         gx = [gl[1] for gl in goals]
@@ -110,6 +131,7 @@ def main():
         ax.set_title(name)
 
     fig.suptitle("", fontsize=13)
+    axes = sim_axes
 
     def positions_at(res, t):
         log = res.positions_log
