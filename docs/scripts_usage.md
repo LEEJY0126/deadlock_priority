@@ -253,6 +253,38 @@ Each run dir contains:
 
 View with: `tensorboard --logdir logs`
 
+## Checkpoint files: `best.pt` vs `checkpoint.pt` vs `final.pt`
+
+Which `.pt` files appear depends on the script. They share the same dict format
+(`{model, no_pool}`, see [Data Formats](#runspt-checkpoints)) and differ only in
+*when* and *why* each is written:
+
+| file | written by | when | how it's selected | use it as |
+|------|-----------|------|-------------------|-----------|
+| `best.pt` | `train_imitation` | every epoch the **validation loss improves** | lowest val loss so far (early-stopping pick) | the imitation model to keep |
+| `checkpoint.pt` | `train_rl` | every `--eval_every` iters, right after a benchmark | none — the **latest** state at that eval | resuming / inspecting a run that is still running or was interrupted |
+| `final.pt` | `train_rl` | once, after the **last** iteration | none — the **end-of-training** state | the RL model to keep |
+
+Key points:
+
+- **`--out` mirrors the "keep" checkpoint.** Every save also writes to `--out`
+  (e.g. `runs/rl.pt`). Imitation copies `best.pt`; RL copies both, but `final.pt`
+  is written last, so `runs/rl.pt` ends up identical to `final.pt`.
+- **Imitation is best-selected; RL is not.** `best.pt` is chosen by validation
+  loss. RL does **no** best-tracking — neither `checkpoint.pt` nor `final.pt` is
+  picked by eval success; they are simply "latest at the last eval" and "latest
+  at the end." To keep the best-by-success RL iterate instead, watch the per-iter
+  `eval_success/{kind}` scalars in TensorBoard and grab the matching
+  `checkpoint.pt` (or re-score candidates with `evaluate.py`).
+- **`checkpoint.pt` vs `final.pt`.** On a clean run they differ only by the
+  iterations between the last eval and the final step (`≤ --eval_every`; they are
+  effectively identical when `--iters` is a multiple of `--eval_every`).
+  `final.pt` is written **only on normal completion** — if a run crashes or is
+  interrupted, `final.pt` may be absent and `checkpoint.pt` (from the last eval)
+  is your most recent recoverable state.
+- Imitation writes **no** `checkpoint.pt` / `final.pt`; RL writes **no**
+  `best.pt`.
+
 ## Reward weights (`reward_weight.yaml`)
 
 RL reward shaping is configured in a tracked `reward_weight.yaml` at the repo
