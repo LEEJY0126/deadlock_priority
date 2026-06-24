@@ -6,3 +6,5 @@ __pycache__/
 data/
 # experiment runs (checkpoints, logs, tensorboard)
 logs/
+# animation outputs (scripts/simulate.py)
+*.gif

@@ -76,6 +76,9 @@ python scripts/train_rl.py --init runs/imitation.pt --out runs/rl.pt --iters 200
 
 # 4. benchmark a checkpoint vs the MST baseline
 python scripts/evaluate.py --ckpt runs/rl.pt
+
+# 5. watch it: animated MST-vs-learned episode on the same instance
+python scripts/simulate.py --ckpt runs/rl.pt --map narrow --seed 10 --max_steps 60
 ```
 
 ## Experiment tracking & reward weights

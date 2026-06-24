@@ -157,6 +157,38 @@ python scripts/visualize.py --ckpt runs/rl.pt --size 13   # bigger, readable num
 
 ---
 
+## `simulate.py`
+
+Animated side-by-side episode: runs the **same** start/goal instance under the
+MST field and the learned field and animates the agents, so you can watch *how*
+the learned priority changes who-yields and the resulting trajectories. Priority
+field as background (viridis), obstacles grey, agents as colored dots with fading
+trails, goals as matching-color stars. Saves a GIF (or shows a live window).
+
+| Argument | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--ckpt` | str | `runs/rl.pt` | Learned checkpoint (MST-only panel if missing) |
+| `--map` | str | `narrow` | `forest` / `wide` / `narrow` |
+| `--size` | int | `21` | Grid side length |
+| `--n_agents` | int | `8` | Number of agents |
+| `--max_steps` | int | `200` | Episode step cap (also caps animation length) |
+| `--seed` | int | `0` | RNG seed for map + start/goals |
+| `--out` | str | `runs/sim.gif` | Output GIF path |
+| `--fps` | int | `5` | Animation frames per second |
+| `--trail` | int | `8` | Trail length in steps (0 = off) |
+| `--live` | flag | off | Show a window instead of saving |
+| `--device` | str | `cuda`/`cpu` | Compute device |
+
+```bash
+# narrow-maze case where MST deadlocks but the learned field solves it:
+python scripts/simulate.py --ckpt runs/rl.pt --map narrow --seed 10 --max_steps 60
+```
+
+Both panels print final `success / makespan / flowtime`. Tip: use `evaluate.py`
+or a quick scan to find a seed that contrasts the two methods.
+
+---
+
 ## `bench_vec.py` (GPU_vectorized branch only)
 
 Throughput benchmark for the experimental GPU-vectorized simulator
