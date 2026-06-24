@@ -29,9 +29,16 @@ class PIBT:
         *yielding* agent is routed toward its lowest-priority neighbor instead of
         its goal (the paper's Alg. 3 line 12 subgoal reassignment).
         """
-        r, c = cur
-        cands = self.gmap.neighbors(cur) + [cur]
-        dist = self.goal_dist[i] if cost is None else cost
+        cands = self.gmap.neighbors(cur)
+        if cost is None:
+            dist = self.goal_dist[i]
+            cands = cands + [cur]  # waiting in place is allowed
+        else:
+            # yielding: must step to a *neighbour* (paper Alg. 3 line 12 -> the
+            # lowest-priority adjacent node), so the current cell is excluded
+            # here; staying put remains available only via func_pibt's
+            # last-resort fallback if no neighbour is free.
+            dist = cost
         # small deterministic tie-break on coordinates keeps runs reproducible
         cands.sort(key=lambda u: (dist[u[0], u[1]], u[0], u[1]))
         return cands

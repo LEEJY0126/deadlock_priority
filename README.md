@@ -143,16 +143,17 @@ Success rate (higher is better), default **paper-yield** deadlock resolution:
 | map    | MST baseline (paper) | imitation CNN | **hybrid (imitation→RL)** |
 |--------|:--------------------:|:-------------:|:-------------------------:|
 | forest |        65.0%         |     70.0%     |         **75.0%**         |
-| wide   |        70.0%         |     68.3%     |         **75.0%**         |
-| narrow |        28.3%         |     31.7%     |         **30.0%**         |
+| wide   |        68.3%         |     70.0%     |         **75.0%**         |
+| narrow |        30.0%         |     30.0%     |         **30.0%**         |
 
-The hybrid learned field still beats the paper's MST heuristic on **all three**
-map types (forest +10.0pp, wide +5.0pp, narrow +1.7pp) — i.e. the conclusion
-"a learned field ≥ the MST heuristic" is robust to the resolution mechanism, not
-an artifact of the boost. Margins are tighter than under the legacy push-through
-boost (below): the paper's *back-out* yield resolves fewer deadlocks than
-*pushing through* in this centralized, fully observable PIBT grid, so absolute
-success rates are lower and the narrow-maze gap narrows. Note the checkpoints
+The hybrid learned field **matches or beats** the paper's MST heuristic on all
+three map types (forest +10.0pp, wide +6.7pp, narrow a tie at 30.0%) — i.e. the
+conclusion "a learned field ≥ the MST heuristic" is robust to the resolution
+mechanism, not an artifact of the boost. Margins are tighter than under the
+legacy push-through boost (below): the paper's *back-out* yield resolves fewer
+deadlocks than *pushing through* in this centralized, fully observable PIBT grid,
+so absolute success rates are lower — and on the 1-wide narrow maze, where there
+is often nowhere to retreat to, all three fields converge. Note the checkpoints
 were **trained under `beta`**, so these are transfer numbers; retraining under
 `yield_mode="paper"` is an obvious follow-up that should widen the learned margin.
 
