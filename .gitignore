@@ -8,3 +8,7 @@ data/
 logs/
 # default scratch output of scripts/simulate.py (curated demos are tracked by name)
 runs/sim.gif
+# gifs of simulated episodes
+runs/gifs/
+# local-only paper-yield demo gifs (scripts/simulate.py, seeds 10-20)
+runs/gifs_paper/

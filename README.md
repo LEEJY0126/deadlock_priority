@@ -138,35 +138,38 @@ to favor speed. The defaults reproduce the results below.
 
 ## Results (held-out, 8 agents, 21×21, 60 instances/kind)
 
-Success rate (higher is better), default **paper-yield** deadlock resolution:
+Success rate (higher is better), default **paper-yield** deadlock resolution
+(bold = best per row):
 
-| map    | MST baseline (paper) | imitation CNN | **hybrid (imitation→RL)** |
-|--------|:--------------------:|:-------------:|:-------------------------:|
-| forest |        65.0%         |     70.0%     |         **75.0%**         |
-| wide   |        68.3%         |     70.0%     |         **75.0%**         |
-| narrow |        30.0%         |     30.0%     |         **30.0%**         |
+| map    | MST baseline (paper) | imitation CNN | hybrid (imitation→RL) |
+|--------|:--------------------:|:-------------:|:---------------------:|
+| forest |        65.0%         |   **75.0%**   |         71.7%         |
+| wide   |        68.3%         |     75.0%     |       **78.3%**       |
+| narrow |        30.0%         |   **40.0%**   |         33.3%         |
 
-The hybrid learned field **matches or beats** the paper's MST heuristic on all
-three map types (forest +10.0pp, wide +6.7pp, narrow a tie at 30.0%) — i.e. the
-conclusion "a learned field ≥ the MST heuristic" is robust to the resolution
-mechanism, not an artifact of the boost. Margins are tighter than under the
-legacy push-through boost (below): the paper's *back-out* yield resolves fewer
-deadlocks than *pushing through* in this centralized, fully observable PIBT grid,
-so absolute success rates are lower — and on the 1-wide narrow maze, where there
-is often nowhere to retreat to, all three fields converge. Note the checkpoints
-were **trained under `beta`**, so these are transfer numbers; retraining under
-`yield_mode="paper"` is an obvious follow-up that should widen the learned margin.
+Both learned fields **beat the paper's MST heuristic on all three** map types —
+the core conclusion "a learned field ≥ the MST heuristic" is robust to the
+resolution mechanism, not an artifact of the boost. Which learned field wins
+varies by map: imitation is strongest on forest (+10.0pp vs MST) and narrow
+(+10.0pp), while RL fine-tuning helps most on wide (hybrid +10.0pp vs MST). RL
+does not uniformly improve on imitation here — with this stochastic run it traded
+a little forest/narrow success for a wide gain. Absolute rates are lower than
+under the legacy push-through boost (below): the paper's *back-out* yield resolves
+fewer deadlocks than *pushing through* in this centralized, fully observable PIBT
+grid. (Numbers are from freshly retrained checkpoints; training is pinned to
+`beta`, so these are transfer numbers and will vary run-to-run.)
 
-<details><summary>Legacy <code>beta</code> push-through numbers (for reference)</summary>
+<details><summary>Legacy <code>beta</code> push-through numbers (same checkpoints)</summary>
 
 | map    | MST  | imitation | hybrid |
 |--------|:----:|:---------:|:------:|
-| forest | 90.0% | 88.3% | **91.7%** |
-| wide   | 81.7% | 86.7% | **90.0%** |
-| narrow | 30.0% | 45.0% | **46.7%** |
+| forest | 90.0% | **91.7%** | 85.0% |
+| wide   | 81.7% | 86.7% | **91.7%** |
+| narrow | 30.0% | 40.0% | **45.0%** |
 
 Reproduce with `yield_mode="beta"`. Higher absolute success because a stuck
-agent is boosted to push through rather than retreating.
+agent is boosted to push through rather than retreating. (Here RL regresses on
+forest but wins wide/narrow — again the imitation/RL lead trades by map.)
 </details>
 
 `runs/fields.png` (from `scripts/visualize.py`) shows *why*: the MST field is
@@ -179,14 +182,14 @@ Reproduce: `python scripts/evaluate.py --ckpt runs/rl.pt --n_per_kind 12 --n_ins
 ### Watch the difference
 
 `scripts/simulate.py` runs the *same* instance under both fields. In this
-narrow-maze case (`--seed 10`) the MST priority **deadlocks** (7/8 agents home)
-while the learned field **solves it in 21 steps** (8/8). The top row shows the
+narrow-maze case (`--seed 20`) the MST priority **deadlocks** (7/8 agents home)
+while the learned field **solves it in 25 steps** (8/8). The top row shows the
 raw priority maps (MST integer levels vs the learned smooth field); the bottom
 row animates the agents:
 
-![MST vs learned priority on a narrow maze](runs/sim_narrow_seed10_raw.gif)
+![MST vs learned priority on a narrow maze](runs/sim_narrow_seed20_raw.gif)
 
-Reproduce: `python scripts/simulate.py --ckpt runs/rl.pt --map narrow --seed 10 --max_steps 60 --raw`
+Reproduce: `python scripts/simulate.py --ckpt runs/rl.pt --map narrow --seed 20 --max_steps 60 --raw`
 
 ## Limitations / next steps
 
