@@ -148,6 +148,16 @@ gradient — finer symmetry-breaking at junctions instead of coarse steps.
 
 Reproduce: `python scripts/evaluate.py --ckpt runs/rl.pt --n_per_kind 12 --n_inst 5`
 
+### Watch the difference
+
+`scripts/simulate.py` runs the *same* instance under both fields. In this
+narrow-maze case (`--seed 10`) the MST priority **deadlocks** (6/8 agents home)
+while the learned field **solves it in 21 steps** (8/8):
+
+![MST vs learned priority on a narrow maze](runs/sim_narrow_seed10.gif)
+
+Reproduce: `python scripts/simulate.py --ckpt runs/rl.pt --map narrow --seed 10 --max_steps 60`
+
 ## Limitations / next steps
 
 - Field is **map-only**; goals are common knowledge under the paper's

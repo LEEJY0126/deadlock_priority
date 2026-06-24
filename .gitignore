@@ -6,5 +6,5 @@ __pycache__/
 data/
 # experiment runs (checkpoints, logs, tensorboard)
 logs/
-# animation outputs (scripts/simulate.py)
-*.gif
+# default scratch output of scripts/simulate.py (curated demos are tracked by name)
+runs/sim.gif
