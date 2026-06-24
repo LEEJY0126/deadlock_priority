@@ -16,6 +16,7 @@ Usage:
 """
 from __future__ import annotations
 
+import shutil
 from datetime import datetime
 from pathlib import Path
 
@@ -48,6 +49,12 @@ class Experiment:
     def save_yaml(self, name, data):
         with open(self.dir / name, "w") as f:
             yaml.safe_dump(dict(data), f, default_flow_style=False, sort_keys=False)
+
+    def snapshot(self, src_path, name=None):
+        """Copy a source file into the run dir (e.g. the model definition), so a
+        run is reproducible even if the code later changes."""
+        dst = self.dir / (name or Path(src_path).name)
+        shutil.copy(src_path, dst)
 
     def log(self, msg):
         print(msg, flush=True)

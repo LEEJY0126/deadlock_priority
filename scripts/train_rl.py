@@ -10,6 +10,7 @@ import multiprocessing as mp
 import numpy as np
 import torch
 from src.envs.grid import maze, random_forest
+from src.priority import model as model_mod
 from src.priority.model import PriorityUNet, predict_field
 from src.train.rl import rl_step
 from src.train.reward import RewardWeights
@@ -70,6 +71,7 @@ def main():
         "reward_weights": weights.to_dict(),
     })
     exp.save_yaml("reward_weight.yaml", weights.to_dict())  # snapshot for reproducibility
+    exp.snapshot(model_mod.__file__, "model.py")
     exp.log(f"reward weights: {weights.to_dict()}")
 
     dev = args.device

@@ -45,7 +45,9 @@ map (occupancy) ──► priority field ──► PIBT per-step ──► episo
 - `src/priority/features.py`     — map-only input channels (no live positions ⇒ comms-free)
 - `src/train/oracle.py`          — candidate-bank search producing imitation labels
 - `src/train/rl.py`              — group-baseline REINFORCE (GRPO-style) over whole-field actions
+- `src/train/reward.py`          — configurable reward weights (`reward_weight.yaml`)
 - `src/eval/benchmark.py`        — apples-to-apples held-out comparison
+- `src/utils/experiment.py`      — per-run logging dir (config, TensorBoard, checkpoints, model snapshot)
 
 ## Quickstart
 
@@ -67,6 +69,32 @@ python scripts/train_rl.py --init runs/imitation.pt --out runs/rl.pt --iters 200
 # 4. benchmark a checkpoint vs the MST baseline
 python scripts/evaluate.py --ckpt runs/rl.pt
 ```
+
+## Experiment tracking & reward weights
+
+Each `train_imitation` / `train_rl` run writes a self-contained directory
+`logs/{script_name}_{timestamp}/` (gitignored):
+
+| file | contents |
+|------|----------|
+| `config.yaml` | hyperparameters — imitation: `total_epochs`, `batch_size`, `learning_rate`; RL: `total_iters`, `sigma`, `learning_rate`, `n_agents`, … |
+| `train.log` | progress (also echoed to stdout) |
+| `events.out.tfevents.*` | TensorBoard scalars (`tensorboard --logdir logs`) |
+| `model.py` | snapshot of the model definition used for the run |
+| `*.pt` | checkpoints (`best.pt` / `final.pt`; also copied to `--out`) |
+| `reward_weight.yaml` | (RL) snapshot of the reward weights used |
+
+RL reward shaping is configured in the tracked **`reward_weight.yaml`** at the
+repo root (`--reward_weights` to override):
+
+```yaml
+success: 2.0     # weight on solving (all agents reach goals)
+makespan: 0.5    # penalty on team finish time
+flowtime: 0.5    # penalty on total effort
+```
+
+Raise `success` to push deadlock resolution harder; raise `makespan`/`flowtime`
+to favor speed. The defaults reproduce the results below.
 
 ## Design notes / decisions
 
