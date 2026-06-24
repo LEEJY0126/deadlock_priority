@@ -36,7 +36,8 @@ def make_entries(n, size, n_agents, rng):
 def cpu_run(entries, max_steps):
     res = []
     for g, s, gl, fld in entries:
-        sim = Simulator(g, s, gl, max_steps=max_steps)
+        # match the vec engine's resolution (beta) for a like-for-like comparison
+        sim = Simulator(g, s, gl, max_steps=max_steps, yield_mode="beta")
         res.append(sim.run(fld))
     return res
 

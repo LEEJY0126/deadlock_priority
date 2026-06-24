@@ -38,8 +38,11 @@ map (occupancy) ──► priority field ──► PIBT per-step ──► episo
 - `src/envs/grid.py`     — occupancy grid, BFS distances, random-forest & braided-maze generators
 - `src/envs/pibt.py`     — PIBT (Priority Inheritance with Backtracking)
 - `src/envs/simulator.py`— episode runner; assembles agent priority from the field
-  (Eq. 13) plus a gentle PIBT anti-starvation boost (applied identically to every
-  method, so the **field is the only variable**)
+  (Eq. 13) and resolves deadlocks with the paper's explicit yield (Alg. 3 lines
+  11-12: a stuck lower-priority agent backs out to its lowest-priority neighbour).
+  A legacy `yield_mode="beta"` push-through boost is also available. Either way the
+  mechanism is applied identically to every method, so the **field is the only
+  variable**.
 - `src/priority/mst_baseline.py` — the paper's MST position-priority field (the baseline to beat)
 - `src/priority/model.py`        — `PriorityUNet`: CNN mapping map features → per-cell field
 - `src/priority/features.py`     — map-only input channels (no live positions ⇒ comms-free)
@@ -113,12 +116,19 @@ to favor speed. The defaults reproduce the results below.
   `narrow` maze (1-wide). Mazes are **braided** (`braid=`) — a perfect/tree maze
   leaves no room for two agents to pass in a 1-wide corridor, making it
   near-unsolvable rather than hard; braiding adds alcoves/loops.
-- **Dynamic boost (`beta`).** A perfectly static field cannot resolve a 1-wide
-  corridor (agents must back out — PIBT's reachability needs a starvation-
-  breaking term). We add a small boost ∝ stuck-time so the field still sets the
-  base ordering while no agent starves. Fields are scale-normalized before the
-  boost so `beta` affects the integer MST field and the learned softplus field
-  equally.
+- **Deadlock resolution (`yield_mode`).** A perfectly static field cannot resolve
+  a 1-wide corridor — agents must back out. The default `"paper"` mode implements
+  the paper's explicit yield (Alg. 3 lines 11-12, Fig. 6): a stuck lower-priority
+  agent that is blocked by a higher-priority neighbour has its subgoal reassigned
+  to the **lowest-priority adjacent node**, so it retreats to make room. (The
+  paper's *limited-sensing* conflict, Eq. 19, has nothing to fire on here — this
+  grid is fully observable — so only the livelock branch, Eq. 18, is ported.) A
+  legacy `"beta"` mode instead *raises* a stuck agent's priority so it pushes
+  through; it resolves more deadlocks in this centralized PIBT grid but is less
+  faithful to the paper. Training is pinned to `"beta"` (the shipped checkpoints
+  were produced that way); benchmark + visualization use `"paper"`. Fields are
+  scale-normalized first so either mechanism treats the integer MST field and the
+  learned softplus field equally.
 - **Imitation target.** The optimal position-priority field is intractable, so
   the oracle scores a bank of candidate fields (MST rooted at different cells +
   geometry baselines) by simulation and keeps the best — a cheap proxy label.
@@ -128,18 +138,35 @@ to favor speed. The defaults reproduce the results below.
 
 ## Results (held-out, 8 agents, 21×21, 60 instances/kind)
 
-Success rate (higher is better):
+Success rate (higher is better), default **paper-yield** deadlock resolution:
 
 | map    | MST baseline (paper) | imitation CNN | **hybrid (imitation→RL)** |
 |--------|:--------------------:|:-------------:|:-------------------------:|
-| forest |        90.0%         |     88.3%     |         **91.7%**         |
-| wide   |        81.7%         |     86.7%     |         **90.0%**         |
-| narrow |        30.0%         |     45.0%     |         **46.7%**         |
+| forest |        65.0%         |     70.0%     |         **75.0%**         |
+| wide   |        70.0%         |     68.3%     |         **75.0%**         |
+| narrow |        28.3%         |     31.7%     |         **30.0%**         |
 
-The hybrid learned field beats the paper's MST heuristic on **all three** map
-types, with the largest gains exactly where deadlocks dominate (wide +8.3pp,
-narrow +16.7pp). Imitation alone already beats the baseline on the congested
-maps; RL recovers the small forest regression and adds further on wide/narrow.
+The hybrid learned field still beats the paper's MST heuristic on **all three**
+map types (forest +10.0pp, wide +5.0pp, narrow +1.7pp) — i.e. the conclusion
+"a learned field ≥ the MST heuristic" is robust to the resolution mechanism, not
+an artifact of the boost. Margins are tighter than under the legacy push-through
+boost (below): the paper's *back-out* yield resolves fewer deadlocks than
+*pushing through* in this centralized, fully observable PIBT grid, so absolute
+success rates are lower and the narrow-maze gap narrows. Note the checkpoints
+were **trained under `beta`**, so these are transfer numbers; retraining under
+`yield_mode="paper"` is an obvious follow-up that should widen the learned margin.
+
+<details><summary>Legacy <code>beta</code> push-through numbers (for reference)</summary>
+
+| map    | MST  | imitation | hybrid |
+|--------|:----:|:---------:|:------:|
+| forest | 90.0% | 88.3% | **91.7%** |
+| wide   | 81.7% | 86.7% | **90.0%** |
+| narrow | 30.0% | 45.0% | **46.7%** |
+
+Reproduce with `yield_mode="beta"`. Higher absolute success because a stuck
+agent is boosted to push through rather than retreating.
+</details>
 
 `runs/fields.png` (from `scripts/visualize.py`) shows *why*: the MST field is
 piecewise-constant in coarse blocks (the 4-cycle rule collapses whole open
@@ -151,7 +178,7 @@ Reproduce: `python scripts/evaluate.py --ckpt runs/rl.pt --n_per_kind 12 --n_ins
 ### Watch the difference
 
 `scripts/simulate.py` runs the *same* instance under both fields. In this
-narrow-maze case (`--seed 10`) the MST priority **deadlocks** (6/8 agents home)
+narrow-maze case (`--seed 10`) the MST priority **deadlocks** (7/8 agents home)
 while the learned field **solves it in 21 steps** (8/8). The top row shows the
 raw priority maps (MST integer levels vs the learned smooth field); the bottom
 row animates the agents:

@@ -28,7 +28,9 @@ def episode_reward(gmap, samples, field, max_steps, weights=DEFAULT_WEIGHTS):
     rs = []
     n = len(samples[0][0])
     for starts, goals in samples:
-        sim = Simulator(gmap, starts, goals, max_steps=max_steps)
+        # training pinned to the legacy beta engine (the existing checkpoints were
+        # produced this way); eval/benchmark use the paper-yield default.
+        sim = Simulator(gmap, starts, goals, max_steps=max_steps, yield_mode="beta")
         res = sim.run(field)
         rs.append(weights.episode(res.success, res.makespan, res.flowtime, n, max_steps))
     return float(np.mean(rs))
