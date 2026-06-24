@@ -11,6 +11,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from src.envs.grid import GridMap
+from src.priority import features as features_mod
 from src.priority.features import build_features
 from src.priority import model as model_mod
 from src.priority.model import PriorityUNet
@@ -55,6 +56,7 @@ def main():
         "device": args.device,
     })
     exp.snapshot(model_mod.__file__, "model.py")
+    exp.snapshot(features_mod.__file__, "features.py")
 
     feats, label, free = load(args.data)
     n = feats.shape[0]

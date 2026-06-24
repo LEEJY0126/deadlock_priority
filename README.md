@@ -80,7 +80,7 @@ Each `train_imitation` / `train_rl` run writes a self-contained directory
 | `config.yaml` | hyperparameters — imitation: `total_epochs`, `batch_size`, `learning_rate`; RL: `total_iters`, `sigma`, `learning_rate`, `n_agents`, … |
 | `train.log` | progress (also echoed to stdout) |
 | `events.out.tfevents.*` | TensorBoard scalars (`tensorboard --logdir logs`) |
-| `model.py` | snapshot of the model definition used for the run |
+| `model.py`, `features.py` | snapshots of the model architecture + input features used for the run |
 | `*.pt` | checkpoints (`best.pt` / `final.pt`; also copied to `--out`) |
 | `reward_weight.yaml` | (RL) snapshot of the reward weights used |
 
