@@ -1,8 +1,12 @@
-"""Render MST vs learned priority fields side by side for a few maps.
+"""Render the original map next to MST vs learned priority fields.
 
-Saves a PNG so you can see *what* the network learned -- e.g. whether it raises
-priority along corridor approaches or reshapes junction orderings relative to the
-MST tree. Run after training: python scripts/visualize.py --ckpt runs/rl.pt
+For each sample map the figure shows three columns: the raw obstacle map, the
+MST priority field, and the learned priority field. Priority cells are annotated
+with their (raw) priority value so you can read absolute levels, while the cell
+color is per-map normalized so the MST and learned patterns are visually
+comparable despite living on different scales.
+
+Run after training: python scripts/visualize.py --ckpt runs/rl.pt
 """
 import sys, os, argparse
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -15,10 +19,11 @@ import torch
 
 from src.envs.grid import maze, random_forest
 from src.priority.mst_baseline import mst_priority_field
-from src.priority.model import PriorityUNet, predict_field
+from src.priority.model import load_model, predict_field
 
 
 def norm(f, occ):
+    """Per-map z-score over free cells; obstacles -> NaN (render blank)."""
     free = occ == 0
     v = f.copy().astype(float)
     if free.sum():
@@ -28,36 +33,76 @@ def norm(f, occ):
     return v
 
 
+def fmt(v):
+    """Compact label: integer if near-integer, else one decimal."""
+    return f"{v:.0f}" if abs(v - round(v)) < 0.05 else f"{v:.1f}"
+
+
+def annotate(ax, raw, normed, occ, fontsize):
+    """Write the raw priority value in each free cell."""
+    H, W = occ.shape
+    for y in range(H):
+        for x in range(W):
+            if occ[y, x] != 0:
+                continue
+            # dark (low) background -> white text, bright (high) -> black text
+            color = "white" if (np.nan_to_num(normed[y, x]) < 0.25) else "black"
+            ax.text(x, y, fmt(raw[y, x]), ha="center", va="center",
+                    fontsize=fontsize, color=color)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--ckpt", default="runs/rl.pt")
     ap.add_argument("--out", default="runs/fields.png")
+    ap.add_argument("--size", type=int, default=21, help="grid side length")
+    ap.add_argument("--no_numbers", action="store_true", help="skip per-cell priority labels")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     args = ap.parse_args()
 
+    S = args.size
     rng = np.random.default_rng(7)
-    maps = [("forest", random_forest(21, 21, 30, rng=rng)),
-            ("wide", maze(21, 21, corridor=2, rng=rng)),
-            ("narrow", maze(21, 21, corridor=1, rng=rng))]
+    maps = [("forest", random_forest(S, S, max(1, S * S // 15), rng=rng)),
+            ("wide", maze(S, S, corridor=2, rng=rng)),
+            ("narrow", maze(S, S, corridor=1, rng=rng))]
 
     model = None
     if os.path.exists(args.ckpt):
-        model = PriorityUNet().to(args.device)
-        model.load_state_dict(torch.load(args.ckpt, map_location=args.device)["model"])
+        model = load_model(args.ckpt, device=args.device)
 
-    fig, axes = plt.subplots(len(maps), 2, figsize=(8, 12))
+    annotate_on = not args.no_numbers
+    fontsize = max(2.5, 90.0 / S)  # shrink labels as the grid grows
+
+    fig, axes = plt.subplots(len(maps), 3, figsize=(15, 5 * len(maps)))
+    if len(maps) == 1:
+        axes = axes[None, :]
     for i, (name, g) in enumerate(maps):
-        mst = norm(mst_priority_field(g), g.occ)
-        axes[i, 0].imshow(mst, cmap="viridis")
-        axes[i, 0].set_title(f"{name}: MST priority")
-        axes[i, 0].axis("off")
+        # column 0: original obstacle map (obstacles dark, free white)
+        axes[i, 0].imshow(g.occ, cmap="gray_r", vmin=0, vmax=1)
+        axes[i, 0].set_title(f"{name}: map")
+
+        # column 1: MST priority field
+        mst_raw = mst_priority_field(g)
+        mst_n = norm(mst_raw, g.occ)
+        axes[i, 1].imshow(mst_n, cmap="viridis")
+        axes[i, 1].set_title(f"{name}: MST priority")
+        if annotate_on:
+            annotate(axes[i, 1], mst_raw, mst_n, g.occ, fontsize)
+
+        # column 2: learned priority field
         if model is not None:
-            learned = norm(predict_field(model, g, device=args.device), g.occ)
-            axes[i, 1].imshow(learned, cmap="viridis")
-            axes[i, 1].set_title(f"{name}: learned priority")
-        axes[i, 1].axis("off")
+            learned_raw = predict_field(model, g, device=args.device)
+            learned_n = norm(learned_raw, g.occ)
+            axes[i, 2].imshow(learned_n, cmap="viridis")
+            axes[i, 2].set_title(f"{name}: learned priority")
+            if annotate_on:
+                annotate(axes[i, 2], learned_raw, learned_n, g.occ, fontsize)
+        axes[i, 2].set_title(axes[i, 2].get_title() or f"{name}: learned priority")
+
+        for c in range(3):
+            axes[i, c].axis("off")
     plt.tight_layout()
-    plt.savefig(args.out, dpi=110)
+    plt.savefig(args.out, dpi=130)
     print(f"saved {args.out}")
 
 

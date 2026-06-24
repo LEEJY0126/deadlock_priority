@@ -5,6 +5,8 @@ REINFORCE, periodically benchmarking against the MST baseline.
 import sys, os, argparse
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import multiprocessing as mp
+
 import numpy as np
 import torch
 from src.envs.grid import maze, random_forest
@@ -42,21 +44,30 @@ def main():
     ap.add_argument("--n_agents", type=int, default=8)
     ap.add_argument("--eval_every", type=int, default=25)
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    ap.add_argument("--no_pool", action="store_true",
+                    help="ablation: full-res CNN (ignored if --init sets the arch)")
+    ap.add_argument("--workers", type=int, default=0,
+                    help="parallel rollout workers (0/1 = serial)")
     args = ap.parse_args()
 
     dev = args.device
-    model = PriorityUNet().to(dev)
+    no_pool = args.no_pool
     anchor = None
     if args.init and os.path.exists(args.init):
-        sd = torch.load(args.init, map_location=dev)["model"]
+        ckpt = torch.load(args.init, map_location=dev)
+        no_pool = ckpt.get("no_pool", False)  # inherit arch from the init checkpoint
+        sd = ckpt["model"]
+        model = PriorityUNet(pool=not no_pool).to(dev)
         model.load_state_dict(sd)
-        print(f"warm-started from {args.init}")
+        print(f"warm-started from {args.init} (no_pool={no_pool})")
         if args.anchor_w > 0:
-            anchor = PriorityUNet().to(dev)
+            anchor = PriorityUNet(pool=not no_pool).to(dev)
             anchor.load_state_dict(sd)
             anchor.eval()
             for p in anchor.parameters():
                 p.requires_grad_(False)
+    else:
+        model = PriorityUNet(pool=not no_pool).to(dev)
     opt = torch.optim.Adam(model.parameters(), lr=args.lr)
     rng = np.random.default_rng(0)
 
@@ -70,21 +81,33 @@ def main():
     print_report("MST baseline", evaluate(baseline_provider, eval_inst))
     bench("learned @ init")
 
-    ema = None
-    os.makedirs(os.path.dirname(args.out), exist_ok=True)
-    for it in range(1, args.iters + 1):
-        maps = sample_maps(args.batch_maps, args.size, rng)
-        stats = rl_step(model, maps, opt, dev, K=args.K, sigma=args.sigma,
-                        n_agents=args.n_agents, rng=rng,
-                        anchor=anchor, anchor_w=args.anchor_w)
-        ema = stats["reward"] if ema is None else 0.95 * ema + 0.05 * stats["reward"]
-        if it % 10 == 0:
-            print(f"it {it:4d}  loss {stats['loss']:+.3f}  reward {stats['reward']:+.3f}  ema {ema:+.3f}")
-        if it % args.eval_every == 0:
-            bench(f"learned @ it{it}")
-            torch.save({"model": model.state_dict()}, args.out)
-    torch.save({"model": model.state_dict()}, args.out)
-    print(f"saved -> {args.out}")
+    # Rollouts are pure-CPU NumPy and independent across (map, sample); a spawn
+    # pool parallelizes them without touching the parent's CUDA context.
+    pool = None
+    if args.workers and args.workers > 1:
+        pool = mp.get_context("spawn").Pool(args.workers)
+        print(f"using {args.workers} rollout workers")
+
+    try:
+        ema = None
+        os.makedirs(os.path.dirname(args.out), exist_ok=True)
+        for it in range(1, args.iters + 1):
+            maps = sample_maps(args.batch_maps, args.size, rng)
+            stats = rl_step(model, maps, opt, dev, K=args.K, sigma=args.sigma,
+                            n_agents=args.n_agents, rng=rng,
+                            anchor=anchor, anchor_w=args.anchor_w, pool=pool)
+            ema = stats["reward"] if ema is None else 0.95 * ema + 0.05 * stats["reward"]
+            if it % 10 == 0:
+                print(f"it {it:4d}  loss {stats['loss']:+.3f}  reward {stats['reward']:+.3f}  ema {ema:+.3f}")
+            if it % args.eval_every == 0:
+                bench(f"learned @ it{it}")
+                torch.save({"model": model.state_dict(), "no_pool": no_pool}, args.out)
+        torch.save({"model": model.state_dict(), "no_pool": no_pool}, args.out)
+        print(f"saved -> {args.out}")
+    finally:
+        if pool is not None:
+            pool.close()
+            pool.join()
 
 
 if __name__ == "__main__":

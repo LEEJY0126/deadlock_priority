@@ -4,3 +4,5 @@ __pycache__/
 .ipynb_checkpoints/
 # regeneratable imitation dataset (use scripts/gen_dataset.py)
 data/
+# local docs (not tracked)
+docs/

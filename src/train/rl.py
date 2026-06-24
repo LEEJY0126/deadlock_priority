@@ -36,8 +36,14 @@ def episode_reward(gmap, samples, field, max_steps):
 
 
 def rl_step(model, maps, opt, device, K=8, sigma=0.5, n_agents=8,
-            n_samples=2, max_steps=400, rng=None, anchor=None, anchor_w=0.0):
-    """One optimization step over a batch of maps. Returns stats dict."""
+            n_samples=2, max_steps=400, rng=None, anchor=None, anchor_w=0.0,
+            pool=None):
+    """One optimization step over a batch of maps. Returns stats dict.
+
+    The B*K episode rollouts are independent; pass a multiprocessing ``pool`` to
+    evaluate them in parallel. The gradient math is identical either way -- only
+    the reward evaluation is distributed.
+    """
     rng = rng or np.random.default_rng()
     free_masks, feats_list, samples_list = [], [], []
     for gmap in maps:
@@ -50,21 +56,36 @@ def rl_step(model, maps, opt, device, K=8, sigma=0.5, n_agents=8,
     feats = torch.stack(feats_list).to(device)        # (B,C,H,W)
     free = torch.stack(free_masks).to(device)         # (B,H,W)
     logits = model(feats, return_logits=True)         # (B,H,W) pre-activation
-
-    total_loss = 0.0
-    all_rewards = []
     B = len(maps)
+
+    # Sample K perturbed fields per map and collect every (b,k) rollout as a flat
+    # task so they can all be dispatched to the pool at once.
+    pre_list, fmask_list, tasks = [], [], []
     for b in range(B):
         a = logits[b]                                 # (H,W) requires grad
         fmask = free[b]
         eps = torch.randn(K, *a.shape, device=device)
         pre = a.detach()[None] + sigma * eps          # (K,H,W) sampled actions
         fields = F.softplus(pre) * fmask              # (K,H,W) >=0
-        rewards = np.array([
-            episode_reward(maps[b], samples_list[b],
-                           fields[k].cpu().numpy(), max_steps)
-            for k in range(K)
-        ])
+        pre_list.append(pre)
+        fmask_list.append(fmask)
+        fields_np = fields.cpu().numpy()
+        for k in range(K):
+            tasks.append((maps[b], samples_list[b], fields_np[k], max_steps))
+
+    if pool is not None:
+        rewards_flat = pool.starmap(episode_reward, tasks)
+    else:
+        rewards_flat = [episode_reward(*t) for t in tasks]
+    rewards_flat = np.asarray(rewards_flat, dtype=np.float64).reshape(B, K)
+
+    total_loss = 0.0
+    all_rewards = []
+    for b in range(B):
+        a = logits[b]
+        pre = pre_list[b]
+        fmask = fmask_list[b]
+        rewards = rewards_flat[b]
         all_rewards.append(rewards.mean())
         adv = (rewards - rewards.mean()) / (rewards.std() + 1e-6)
         adv_t = torch.from_numpy(adv.astype(np.float32)).to(device)

@@ -41,6 +41,7 @@ def main():
     ap.add_argument("--bs", type=int, default=16)
     ap.add_argument("--lr", type=float, default=1e-3)
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    ap.add_argument("--no_pool", action="store_true", help="ablation: full-res CNN, no MaxPool")
     args = ap.parse_args()
 
     feats, label, free = load(args.data)
@@ -52,7 +53,7 @@ def main():
 
     dev = args.device
     feats, label, free = feats.to(dev), label.to(dev), free.to(dev)
-    model = PriorityUNet().to(dev)
+    model = PriorityUNet(pool=not args.no_pool).to(dev)
     opt = torch.optim.Adam(model.parameters(), lr=args.lr)
 
     def loss_on(idx):
@@ -79,7 +80,7 @@ def main():
             vl = loss_on(val_idx).item()
         if vl < best:
             best = vl
-            torch.save({"model": model.state_dict()}, args.out)
+            torch.save({"model": model.state_dict(), "no_pool": args.no_pool}, args.out)
         if ep % 10 == 0 or ep == args.epochs - 1:
             print(f"ep {ep:3d} train {tot/len(tr):.4f} val {vl:.4f} best {best:.4f}")
     print(f"saved best (val {best:.4f}) -> {args.out}")

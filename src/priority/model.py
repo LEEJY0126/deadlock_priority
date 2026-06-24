@@ -28,12 +28,14 @@ class ConvBlock(nn.Module):
 
 
 class PriorityUNet(nn.Module):
-    def __init__(self, cin=N_CHANNELS, base=32):
+    def __init__(self, cin=N_CHANNELS, base=32, pool=True):
         super().__init__()
+        self.use_pool = pool
         self.enc1 = ConvBlock(cin, base)
         self.enc2 = ConvBlock(base, base * 2)
         self.enc3 = ConvBlock(base * 2, base * 4)
-        self.pool = nn.MaxPool2d(2)
+        # pool=False -> full-resolution flat CNN (ablation: small receptive field)
+        self.pool = nn.MaxPool2d(2) if pool else nn.Identity()
         self.up2 = nn.Conv2d(base * 4, base * 2, 1)
         self.dec2 = ConvBlock(base * 4, base * 2)
         self.up1 = nn.Conv2d(base * 2, base, 1)
@@ -54,6 +56,14 @@ class PriorityUNet(nn.Module):
     @staticmethod
     def _up(x, ref):
         return F.interpolate(x, size=ref.shape[-2:], mode="nearest")
+
+
+def load_model(path, device="cpu"):
+    """Rebuild a PriorityUNet from a checkpoint, honoring its stored arch flags."""
+    ckpt = torch.load(path, map_location=device)
+    model = PriorityUNet(pool=not ckpt.get("no_pool", False)).to(device)
+    model.load_state_dict(ckpt["model"])
+    return model
 
 
 @torch.no_grad()

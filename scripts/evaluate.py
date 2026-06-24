@@ -5,7 +5,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import torch
 from src.eval.benchmark import (make_eval_maps, make_instances, evaluate,
                                 baseline_provider, print_report)
-from src.priority.model import PriorityUNet, predict_field
+from src.priority.model import load_model, predict_field
 
 
 def main():
@@ -23,8 +23,7 @@ def main():
     print_report("MST baseline", evaluate(baseline_provider, inst))
 
     if args.ckpt:
-        model = PriorityUNet().to(args.device)
-        model.load_state_dict(torch.load(args.ckpt, map_location=args.device)["model"])
+        model = load_model(args.ckpt, device=args.device)
         provider = lambda g: predict_field(model, g, device=args.device)
         print_report(f"Learned ({os.path.basename(args.ckpt)})", evaluate(provider, inst))
 
