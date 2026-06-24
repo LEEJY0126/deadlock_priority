@@ -66,6 +66,14 @@ python scripts/train_imitation.py --data data/imitation.npz --out runs/imitation
 # 3. RL fine-tuning (hybrid: warm-start from imitation, anchor to prevent forgetting)
 python scripts/train_rl.py --init runs/imitation.pt --out runs/rl.pt --iters 200
 
+#    faster rollouts (cpu, exact PIBT): parallelize over a process pool
+python scripts/train_rl.py --init runs/imitation.pt --out runs/rl.pt --iters 200 --workers 8
+
+#    GPU-vectorized rollouts (GPU_vectorized branch): batch all episodes on the
+#    GPU. ~4.5x faster training here, but uses an *approximate* non-backtracking
+#    solver -- the learned field still transfers to PIBT (see docs/report_GPU-vectorized.md).
+python scripts/train_rl.py --init runs/imitation.pt --out runs/rl.pt --iters 200 --engine vec
+
 # 4. benchmark a checkpoint vs the MST baseline
 python scripts/evaluate.py --ckpt runs/rl.pt
 ```
