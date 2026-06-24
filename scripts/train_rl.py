@@ -12,8 +12,10 @@ import torch
 from src.envs.grid import maze, random_forest
 from src.priority.model import PriorityUNet, predict_field
 from src.train.rl import rl_step
+from src.train.reward import RewardWeights
 from src.eval.benchmark import (make_eval_maps, make_instances, evaluate,
                                 baseline_provider, print_report)
+from src.utils.experiment import Experiment
 
 
 def _one_map(kind, size, rng):
@@ -50,7 +52,25 @@ def main():
                     help="parallel rollout workers (0/1 = serial; cpu engine only)")
     ap.add_argument("--engine", choices=["cpu", "vec"], default="cpu",
                     help="reward rollouts: cpu=exact PIBT, vec=GPU-batched approx")
+    ap.add_argument("--reward_weights", default="reward_weight.yaml",
+                    help="YAML of reward shaping weights")
     args = ap.parse_args()
+
+    weights = RewardWeights.load(args.reward_weights)
+    exp = Experiment("train_rl", config={
+        "total_iters": args.iters,
+        "sigma": args.sigma,
+        "learning_rate": args.lr,
+        "n_agents": args.n_agents,
+        "batch_maps": args.batch_maps,
+        "K": args.K,
+        "anchor_w": args.anchor_w,
+        "engine": args.engine,
+        "init": args.init,
+        "reward_weights": weights.to_dict(),
+    })
+    exp.save_yaml("reward_weight.yaml", weights.to_dict())  # snapshot for reproducibility
+    exp.log(f"reward weights: {weights.to_dict()}")
 
     dev = args.device
     no_pool = args.no_pool
@@ -61,7 +81,7 @@ def main():
         sd = ckpt["model"]
         model = PriorityUNet(pool=not no_pool).to(dev)
         model.load_state_dict(sd)
-        print(f"warm-started from {args.init} (no_pool={no_pool})")
+        exp.log(f"warm-started from {args.init} (no_pool={no_pool})")
         if args.anchor_w > 0:
             anchor = PriorityUNet(pool=not no_pool).to(dev)
             anchor.load_state_dict(sd)
@@ -76,21 +96,33 @@ def main():
     eval_maps = make_eval_maps(n_per_kind=8)
     eval_inst = make_instances(eval_maps, n_agents=args.n_agents, n_inst=3)
 
-    def bench(tag):
+    def bench(tag, step=None):
         provider = lambda g: predict_field(model, g, device=dev)
-        print_report(f"{tag}", evaluate(provider, eval_inst))
+        report = evaluate(provider, eval_inst)
+        print_report(f"{tag}", report)
+        if step is not None:
+            for kind, r in report.items():
+                exp.scalar(f"eval_success/{kind}", r["success_rate"], step)
+                exp.scalar(f"eval_makespan/{kind}", r["makespan"], step)
+                exp.scalar(f"eval_flowtime/{kind}", r["flowtime"], step)
+        return report
 
     print_report("MST baseline", evaluate(baseline_provider, eval_inst))
-    bench("learned @ init")
+    bench("learned @ init", step=0)
 
     # Rollouts are pure-CPU NumPy and independent across (map, sample); a spawn
     # pool parallelizes them without touching the parent's CUDA context.
     pool = None
     if args.workers and args.workers > 1 and args.engine == "cpu":
         pool = mp.get_context("spawn").Pool(args.workers)
-        print(f"using {args.workers} rollout workers")
+        exp.log(f"using {args.workers} rollout workers")
     if args.engine == "vec":
-        print("using GPU-vectorized rollout engine (approximate solver)")
+        exp.log("using GPU-vectorized rollout engine (approximate solver)")
+
+    def save(name):
+        ckpt = {"model": model.state_dict(), "no_pool": no_pool}
+        torch.save(ckpt, exp.path(name))
+        torch.save(ckpt, args.out)
 
     try:
         ema = None
@@ -100,19 +132,24 @@ def main():
             stats = rl_step(model, maps, opt, dev, K=args.K, sigma=args.sigma,
                             n_agents=args.n_agents, rng=rng,
                             anchor=anchor, anchor_w=args.anchor_w, pool=pool,
-                            engine=args.engine)
+                            engine=args.engine, weights=weights)
             ema = stats["reward"] if ema is None else 0.95 * ema + 0.05 * stats["reward"]
+            exp.scalar("reward/step", stats["reward"], it)
+            exp.scalar("reward/ema", ema, it)
+            exp.scalar("loss", stats["loss"], it)
             if it % 10 == 0:
-                print(f"it {it:4d}  loss {stats['loss']:+.3f}  reward {stats['reward']:+.3f}  ema {ema:+.3f}")
+                exp.log(f"it {it:4d}  loss {stats['loss']:+.3f}  "
+                        f"reward {stats['reward']:+.3f}  ema {ema:+.3f}")
             if it % args.eval_every == 0:
-                bench(f"learned @ it{it}")
-                torch.save({"model": model.state_dict(), "no_pool": no_pool}, args.out)
-        torch.save({"model": model.state_dict(), "no_pool": no_pool}, args.out)
-        print(f"saved -> {args.out}")
+                bench(f"learned @ it{it}", step=it)
+                save("checkpoint.pt")
+        save("final.pt")
+        exp.log(f"saved -> {exp.path('final.pt')} and {args.out}")
     finally:
         if pool is not None:
             pool.close()
             pool.join()
+        exp.close()
 
 
 if __name__ == "__main__":

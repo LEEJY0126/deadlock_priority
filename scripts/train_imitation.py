@@ -13,6 +13,7 @@ import torch.nn.functional as F
 from src.envs.grid import GridMap
 from src.priority.features import build_features
 from src.priority.model import PriorityUNet
+from src.utils.experiment import Experiment
 
 
 def load(path):
@@ -43,6 +44,15 @@ def main():
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--no_pool", action="store_true", help="ablation: full-res CNN, no MaxPool")
     args = ap.parse_args()
+
+    exp = Experiment("train_imitation", config={
+        "total_epochs": args.epochs,
+        "batch_size": args.bs,
+        "learning_rate": args.lr,
+        "data": args.data,
+        "no_pool": args.no_pool,
+        "device": args.device,
+    })
 
     feats, label, free = load(args.data)
     n = feats.shape[0]
@@ -75,15 +85,26 @@ def main():
             loss.backward()
             opt.step()
             tot += loss.item() * len(b)
+        train_loss = tot / len(tr)
         model.eval()
         with torch.no_grad():
             vl = loss_on(val_idx).item()
+        exp.scalar("loss/train", train_loss, ep)
+        exp.scalar("loss/val", vl, ep)
         if vl < best:
             best = vl
-            torch.save({"model": model.state_dict(), "no_pool": args.no_pool}, args.out)
+            ckpt = {"model": model.state_dict(), "no_pool": args.no_pool}
+            torch.save(ckpt, exp.path("best.pt"))
+            torch.save(ckpt, args.out)
         if ep % 10 == 0 or ep == args.epochs - 1:
-            print(f"ep {ep:3d} train {tot/len(tr):.4f} val {vl:.4f} best {best:.4f}")
-    print(f"saved best (val {best:.4f}) -> {args.out}")
+            exp.log(f"ep {ep:3d} train {train_loss:.4f} val {vl:.4f} best {best:.4f}")
+    exp.save_yaml("config.yaml", {
+        "total_epochs": args.epochs, "batch_size": args.bs, "learning_rate": args.lr,
+        "data": args.data, "no_pool": args.no_pool, "device": args.device,
+        "best_val_loss": best,
+    })
+    exp.log(f"saved best (val {best:.4f}) -> {exp.path('best.pt')} and {args.out}")
+    exp.close()
 
 
 if __name__ == "__main__":

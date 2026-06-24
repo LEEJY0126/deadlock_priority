@@ -13,9 +13,11 @@ from __future__ import annotations
 import numpy as np
 
 from ..envs.vec_sim import build_batch, VecSim
+from .reward import DEFAULT_WEIGHTS
 
 
-def vec_rewards(maps, samples_list, fields_np, n_agents, max_steps, device):
+def vec_rewards(maps, samples_list, fields_np, n_agents, max_steps, device,
+                weights=DEFAULT_WEIGHTS):
     """Mean reward over samples for each (map, field).
 
     maps:         list[GridMap], length B
@@ -33,9 +35,8 @@ def vec_rewards(maps, samples_list, fields_np, n_agents, max_steps, device):
                 layout.append((b, k))
 
     out = VecSim(build_batch(entries, device=device), max_steps=max_steps).run()
-    r = (2.0 * out["success"].astype(np.float64)
-         - 0.5 * out["makespan"] / max_steps
-         - 0.5 * out["flowtime"] / (n_agents * max_steps))
+    r = weights.episode(out["success"].astype(np.float64),
+                        out["makespan"], out["flowtime"], n_agents, max_steps)
 
     rbk = np.zeros((B, K))
     cnt = np.zeros((B, K))

@@ -1,0 +1,10 @@
+# Reward weights for RL fine-tuning (train_rl.py).
+# Per-episode reward = success*w_success
+#                      - makespan_norm*w_makespan
+#                      - flowtime_norm*w_flowtime
+# where the norms divide by max_steps (and n_agents for flowtime), matching
+# src/train/rl.py:episode_reward. Higher success weight => prioritize solving;
+# higher makespan/flowtime weights => prioritize speed/efficiency.
+success: 2.0
+makespan: 0.5
+flowtime: 0.5

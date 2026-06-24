@@ -6,3 +6,5 @@ __pycache__/
 data/
 # local docs (not tracked)
 docs/
+# experiment runs (checkpoints, logs, tensorboard)
+logs/

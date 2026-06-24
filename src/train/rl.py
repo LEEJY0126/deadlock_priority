@@ -15,29 +15,28 @@ import torch.nn.functional as F
 from ..envs.grid import GridMap, sample_start_goals
 from ..envs.simulator import Simulator
 from ..priority.features import build_features
+from .reward import DEFAULT_WEIGHTS, RewardWeights
 
 
-def episode_reward(gmap, samples, field, max_steps):
+def episode_reward(gmap, samples, field, max_steps, weights=DEFAULT_WEIGHTS):
     """Mean reward of a field over shared start/goal samples.
 
     Rewards success strongly and, as a dense shaping term, prefers lower makespan
-    and flowtime so there is still gradient once success saturates.
+    and flowtime so there is still gradient once success saturates. Shaping
+    coefficients come from `weights` (reward_weight.yaml).
     """
     rs = []
     n = len(samples[0][0])
     for starts, goals in samples:
         sim = Simulator(gmap, starts, goals, max_steps=max_steps)
         res = sim.run(field)
-        r = (2.0 * res.success
-             - 0.5 * res.makespan / max_steps
-             - 0.5 * res.flowtime / (n * max_steps))
-        rs.append(r)
+        rs.append(weights.episode(res.success, res.makespan, res.flowtime, n, max_steps))
     return float(np.mean(rs))
 
 
 def rl_step(model, maps, opt, device, K=8, sigma=0.5, n_agents=8,
             n_samples=2, max_steps=400, rng=None, anchor=None, anchor_w=0.0,
-            pool=None, engine="cpu"):
+            pool=None, engine="cpu", weights=DEFAULT_WEIGHTS):
     """One optimization step over a batch of maps. Returns stats dict.
 
     The B*K episode rollouts are independent. ``engine`` selects how rewards are
@@ -73,12 +72,12 @@ def rl_step(model, maps, opt, device, K=8, sigma=0.5, n_agents=8,
         fields_np = fields.cpu().numpy()
         fields_list.append(fields_np)
         for k in range(K):
-            tasks.append((maps[b], samples_list[b], fields_np[k], max_steps))
+            tasks.append((maps[b], samples_list[b], fields_np[k], max_steps, weights))
 
     if engine == "vec":
         from .rl_vec import vec_rewards
         rewards_flat = vec_rewards(maps, samples_list, fields_list,
-                                   n_agents, max_steps, device)
+                                   n_agents, max_steps, device, weights=weights)
     elif pool is not None:
         rewards_flat = np.asarray(pool.starmap(episode_reward, tasks),
                                   dtype=np.float64).reshape(B, K)
