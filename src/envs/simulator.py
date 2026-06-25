@@ -116,25 +116,36 @@ class Simulator:
                 prio[i] += self.beta * stuck[i]
         return prio, base
 
-    def _yielders(self, pos, prio, arrived, stuck):
+    def _yielders(self, pos, prio, base, arrived, stuck, oscillating):
         """Grid-adapted livelock detection (paper Eq. 18 / Alg. 3 line 11).
 
-        An agent yields when it is (a) not at its goal, (b) stuck for at least
-        ``yield_patience`` steps (no progress / oscillation proxy, Eq. 18a-b),
-        and (c) adjacent to a higher-priority agent that is still en route
-        (Eq. 18c-d). Such agents back out to their lowest-priority neighbour.
+        An agent (not at goal) is told to back out to its lowest-priority
+        neighbour when adjacent to an en-route agent ``j`` it should defer to, in
+        either of two cases:
+
+        * **stuck block** (Eq. 18a-b proxy): it has made no progress for
+          ``yield_patience`` steps and ``j`` has strictly higher *full* priority.
+        * **oscillation** (Eq. 18a, the priority-swap livelock): it just returned
+          to the cell it occupied two steps ago, and ``j`` outranks it by **base
+          position priority** -- compared offset-free, since the anti-oscillation
+          tie-break (Eq. 13b) inflates whichever agent was just pushed down and
+          would otherwise hide who should yield. Ties broken by index (lower index
+          = higher priority, matching PIBT).
+
         Returns a boolean array over agents."""
         n = self.n
         yld = np.zeros(n, dtype=bool)
         posset = {pos[j]: j for j in range(n)}
         for i in range(n):
-            if arrived[i] or stuck[i] < self.yield_patience:
+            if arrived[i]:
                 continue
             for u in self.gmap.neighbors(pos[i]):
                 j = posset.get(u)
                 if j is None or arrived[j]:
                     continue
-                if prio[j] > prio[i]:  # blocked by a higher-priority neighbour
+                stuck_block = stuck[i] >= self.yield_patience and prio[j] > prio[i]
+                osc_swap = oscillating[i] and (base[j], -j) > (base[i], -i)
+                if stuck_block or osc_swap:
                     yld[i] = True
                     break
         return yld
@@ -204,10 +215,15 @@ class Simulator:
         makespan = None
         stuck = np.zeros(self.n, dtype=np.float64)
         prev_gdist = np.array([self.goal_dist[i][pos[i]] for i in range(self.n)])
-        last_pos = list(pos)  # configuration before the previous step (Eq. 14a)
+        last_pos = list(pos)   # config one step ago (Eq. 14a: "did not move")
+        last2_pos = list(pos)  # config two steps ago (period-2 oscillation test)
 
         for t in range(1, self.max_steps + 1):
             arrived = [pos[i] == self.goals[i] for i in range(self.n)]
+            # oscillation: agent is back on the cell it held two steps ago, having
+            # moved off it in between (the priority-swap livelock signature).
+            oscillating = [pos[i] == last2_pos[i] and pos[i] != last_pos[i]
+                           for i in range(self.n)]
             prio, base = self._agent_priorities(pos, prev_base, arrived, stuck)
             # paper resolution: deadlock (Eq. 14 -> right-hand rule, Eq. 15) takes
             # precedence over the livelock fallback (Eq. 18 -> lowest-priority
@@ -220,12 +236,13 @@ class Simulator:
                     for i in range(self.n):
                         if blocker[i] >= 0:
                             cost[i] = self._right_hand_cost(pos[i], pos[blocker[i]])
-                yld = self._yielders(pos, prio, arrived, stuck)
+                yld = self._yielders(pos, prio, base, arrived, stuck, oscillating)
                 for i in range(self.n):
                     if cost[i] is None and yld[i]:
                         cost[i] = self.field
                 if all(c is None for c in cost):
                     cost = None
+            last2_pos = last_pos
             last_pos = list(pos)
             pos = self.pibt.step(pos, prio, rng=rng, cost=cost)
             prev_base = np.array([self.field[p[0], p[1]] for p in pos])
