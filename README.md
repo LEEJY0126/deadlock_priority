@@ -67,26 +67,29 @@ python scripts/smoke_test.py
 # 1. generate imitation labels (oracle search per map)
 python scripts/gen_dataset.py --out data/imitation.npz --n_maps 150
 
-# 2. imitation pretraining (default U-Net; --arch transformer for the attention model)
-python scripts/train_imitation.py --data data/imitation.npz --out runs/imitation.pt
-#    the architecture is recorded in the checkpoint and inherited through RL/eval/viz
+# 2. imitation pretraining -- the headline model is the Transformer (--arch
+#    transformer); omit --arch for the default U-Net. The architecture is recorded
+#    in the checkpoint and inherited automatically through RL / eval / viz.
+python scripts/train_imitation.py --data data/imitation.npz \
+    --arch transformer --out runs/imitation_transformer.pt
 
-# 3. RL fine-tuning (hybrid: warm-start from imitation, anchor to prevent forgetting)
-python scripts/train_rl.py --init runs/imitation.pt --out runs/rl.pt --iters 200
+# 3. RL fine-tuning (hybrid: warm-start from imitation, anchor to prevent forgetting;
+#    the arch is inherited from --init, so no need to repeat --arch)
+python scripts/train_rl.py --init runs/imitation_transformer.pt --out runs/rl_transformer.pt --iters 200
 
 #    faster rollouts (cpu, exact PIBT): parallelize over a process pool
-python scripts/train_rl.py --init runs/imitation.pt --out runs/rl.pt --iters 200 --workers 8
+python scripts/train_rl.py --init runs/imitation_transformer.pt --out runs/rl_transformer.pt --iters 200 --workers 8
 
 #    GPU-vectorized rollouts (GPU_vectorized branch): batch all episodes on the
 #    GPU. ~4.5x faster training here, but uses an *approximate* non-backtracking
 #    solver -- the learned field still transfers to PIBT (see docs/report_GPU-vectorized.md).
-python scripts/train_rl.py --init runs/imitation.pt --out runs/rl.pt --iters 200 --engine vec
+python scripts/train_rl.py --init runs/imitation_transformer.pt --out runs/rl_transformer.pt --iters 200 --engine vec
 
 # 4. benchmark a checkpoint vs the MST baseline
-python scripts/evaluate.py --ckpt runs/rl.pt
+python scripts/evaluate.py --ckpt runs/rl_transformer.pt
 
 # 5. watch it: animated MST-vs-learned episode on the same instance
-python scripts/simulate.py --ckpt runs/rl.pt --map narrow --seed 20 --max_steps 60
+python scripts/simulate.py --ckpt runs/rl_transformer.pt --map narrow --seed 20 --max_steps 60
 ```
 
 ## Experiment tracking & reward weights
