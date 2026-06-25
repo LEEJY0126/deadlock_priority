@@ -275,13 +275,16 @@ Each run dir contains:
 | `*.pt` | checkpoints — `best.pt` (both), plus `checkpoint.pt`/`final.pt` (RL). `best.pt` is mirrored to `--out`. |
 | `reward_weight.yaml` | (RL only) snapshot of the reward weights used |
 
-**`config.yaml` fields**
-- `train_imitation`: `total_epochs`, `batch_size`, `learning_rate` (+ `data`, `arch`, `no_pool`, `config`, `device`, `best_val_loss`).
-- `train_rl`: `total_iters`, `sigma`, `learning_rate`, `n_agents` (+ `batch_maps`, `K`, `anchor_w`, `engine`, `init`, `arch`, `reward_weights`).
+**`config.yaml` fields** — both scripts dump the **full CLI argument namespace**
+(every flag, keyed by its `--name`), so the file is a complete record of how the
+run was invoked. `train_imitation` adds `config` (the resolved arch-hyperparameter
+dict) and `best_val_loss`; `train_rl` additionally snapshots the *resolved* reward
+weights to `reward_weight.yaml` (the `reward_weights` field in `config.yaml` is the
+YAML path that was passed).
 
-`arch` records the architecture (`unet`/`transformer`) and `config` holds its
-arch-specific hyperparameters (transformer `dim`/`depth`/`heads`/`dropout`;
-empty for the U-Net, which uses the `no_pool` flag instead).
+`arch` records the requested architecture (`unet`/`transformer`) and `config`
+holds its arch-specific hyperparameters (transformer `dim`/`depth`/`heads`/
+`dropout`; empty for the U-Net, which uses the `no_pool` flag instead).
 
 **TensorBoard scalars**
 - `train_imitation`: `loss/train`, `loss/val`.
@@ -356,6 +359,7 @@ three (stacked in generation order, cycling forest → wide → narrow).
 | `occ` | `(N, S, S)` | `uint8` | Occupancy grids. `0` = free cell, `1` = obstacle. |
 | `label` | `(N, S, S)` | `float32` | Oracle-selected priority field per cell — the imitation target. |
 | `kind` | `(N,)` | `<U6` (str) | Map type per row: `forest` / `wide` / `narrow`. |
+| `meta` | scalar | `<U…` (str) | JSON of the full generation config (every `gen_dataset.py` CLI arg, incl. `--oracle`). Read with `json.loads(str(d["meta"]))`. |
 
 `N` = number of maps (`--n_maps`), `S` = grid size (`--size`, e.g. 21).
 

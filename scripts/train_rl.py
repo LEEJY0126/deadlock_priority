@@ -69,20 +69,9 @@ def main():
     args = ap.parse_args()
 
     weights = RewardWeights.load(args.reward_weights)
-    exp = Experiment("train_rl", config={
-        "total_iters": args.iters,
-        "sigma": args.sigma,
-        "learning_rate": args.lr,
-        "n_agents": args.n_agents,
-        "batch_maps": args.batch_maps,
-        "K": args.K,
-        "anchor_w": args.anchor_w,
-        "engine": args.engine,
-        "oracle": args.oracle,
-        "init": args.init,
-        "arch": args.arch,
-        "reward_weights": weights.to_dict(),
-    })
+    # log *every* CLI arg so nothing is silently dropped; the resolved reward
+    # weights are snapshotted separately into reward_weight.yaml below.
+    exp = Experiment("train_rl", config=dict(vars(args)))
     exp.save_yaml("reward_weight.yaml", weights.to_dict())  # snapshot for reproducibility
     exp.snapshot(model_mod.__file__, "model.py")
     exp.snapshot(features_mod.__file__, "features.py")

@@ -56,16 +56,10 @@ def main():
 
     config = ({} if args.arch == "unet" else
               dict(dim=args.dim, depth=args.depth, heads=args.heads, dropout=args.dropout))
-    exp = Experiment("train_imitation", config={
-        "total_epochs": args.epochs,
-        "batch_size": args.bs,
-        "learning_rate": args.lr,
-        "data": args.data,
-        "arch": args.arch,
-        "no_pool": args.no_pool,
-        "config": config,
-        "device": args.device,
-    })
+    # log *every* CLI arg (so nothing is silently dropped) plus the resolved
+    # arch-hyperparameter dict that goes into the checkpoint.
+    run_config = {**vars(args), "config": config}
+    exp = Experiment("train_imitation", config=run_config)
     exp.snapshot(model_mod.__file__, "model.py")
     exp.snapshot(features_mod.__file__, "features.py")
     if args.arch == "transformer":
@@ -117,11 +111,7 @@ def main():
             torch.save(ckpt, args.out)
         if ep % 10 == 0 or ep == args.epochs - 1:
             exp.log(f"ep {ep:3d} train {train_loss:.4f} val {vl:.4f} best {best:.4f}")
-    exp.save_yaml("config.yaml", {
-        "total_epochs": args.epochs, "batch_size": args.bs, "learning_rate": args.lr,
-        "data": args.data, "arch": args.arch, "no_pool": args.no_pool,
-        "config": config, "device": args.device, "best_val_loss": best,
-    })
+    exp.save_yaml("config.yaml", {**run_config, "best_val_loss": best})
     exp.log(f"saved best (val {best:.4f}) -> {exp.path('best.pt')} and {args.out}")
     exp.close()
 

@@ -4,7 +4,7 @@ map-level priority field and cache (occupancy, label field).
 Fields are map-only (no goal conditioning) so each map has a single target,
 matching the paper's static position-priority tree.
 """
-import sys, os, argparse, time
+import sys, os, argparse, time, json
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
@@ -51,11 +51,16 @@ def main():
         kinds_log.append(kind)
 
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
+    # record the full generation config in the archive so the dataset is
+    # self-describing (every CLI arg, incl. --oracle, is logged here).
+    meta = json.dumps(vars(args))
     np.savez_compressed(args.out,
                         occ=np.stack(occs).astype(np.uint8),
                         label=np.stack(labels).astype(np.float32),
-                        kind=np.array(kinds_log))
+                        kind=np.array(kinds_log),
+                        meta=np.array(meta))
     print(f"saved {len(occs)} maps to {args.out} in {time.time()-t0:.1f}s")
+    print(f"  config: {meta}")
 
 
 if __name__ == "__main__":
