@@ -41,7 +41,7 @@ python scripts/gen_dataset.py --out data/imitation.npz --n_maps 150
 ---
 
 ## `train_imitation.py`
-Imitation pretraining: regress the CNN onto oracle-selected priority fields
+Imitation pretraining: regress the model onto oracle-selected priority fields
 (loss is ordering-only, standardized per map).
 
 | Argument | Type | Default | Description |
@@ -51,11 +51,31 @@ Imitation pretraining: regress the CNN onto oracle-selected priority fields
 | `--epochs` | int | `200` | Training epochs |
 | `--bs` | int | `16` | Batch size |
 | `--lr` | float | `1e-3` | Adam learning rate |
+| `--arch` | str | `unet` | Model architecture: `unet` (U-Net CNN) or `transformer` (CNN stem + self-attention, see below) |
+| `--no_pool` | flag | off | Ablation: full-res CNN, no MaxPool (`unet` only) |
+| `--dim` | int | `128` | Token embedding dim (`transformer` only) |
+| `--depth` | int | `4` | Transformer encoder layers (`transformer` only) |
+| `--heads` | int | `4` | Self-attention heads (`transformer` only) |
+| `--dropout` | float | `0.0` | Encoder dropout (`transformer` only) |
 | `--device` | str | `cuda`/`cpu` | Compute device |
 
 ```bash
 python scripts/train_imitation.py --data data/imitation.npz --out runs/imitation.pt
+# transformer variant (smaller is safer on the ~150-map set — see note):
+python scripts/train_imitation.py --arch transformer --dim 96 --depth 3 --dropout 0.1
 ```
+
+> **`--arch transformer` (`src/priority/model_transformer.py`).** A drop-in
+> alternative to the U-Net: a conv stem lifts the map features to per-cell
+> tokens, a Transformer **encoder** (with on-the-fly 2D sinusoidal positional
+> encoding, so it generalizes to any map size) lets every cell attend to every
+> other for global context, and a per-token MLP head (plus a stem skip)
+> regresses the scalar priority. Same I/O contract as the U-Net, so it works
+> unchanged with `train_rl.py`, `evaluate.py`, `visualize.py`, `simulate.py`.
+> The arch + its hyperparameters are stored in the checkpoint and rebuilt
+> automatically on load. With only ~150 single-size maps the higher-capacity
+> transformer can overfit where the U-Net's conv bias wins — start small
+> (`--dim 96 --depth 3`) and use `--dropout`.
 
 ---
 
@@ -80,7 +100,16 @@ catastrophic forgetting. Periodically benchmarks against the MST baseline.
 | `--workers` | int | `0` | Parallel rollout workers (0/1 = serial; ~3× faster at 8; cpu engine only) |
 | `--engine` | str | `cpu` | Rollout engine: `cpu` (exact PIBT) or `vec` (GPU-batched approx; `GPU_vectorized` branch) |
 | `--reward_weights` | str | `reward_weight.yaml` | YAML of reward shaping weights (snapshotted into the run dir) |
+| `--arch` | str | `unet` | Architecture for a **cold start** (no `--init`): `unet` or `transformer`. Ignored when `--init` is given — the arch is inherited from the checkpoint. |
+| `--no_pool` | flag | off | `unet` cold-start ablation; inherited from `--init` when set |
+| `--dim` / `--depth` / `--heads` / `--dropout` | — | `128`/`4`/`4`/`0.0` | `transformer` cold-start hyperparameters (ignored with `--init`) |
 | `--device` | str | `cuda`/`cpu` | Compute device |
+
+> **Architecture is inherited from `--init`.** The warm-start path reads `arch`
+> (and its `config`) from the imitation checkpoint and rebuilds the matching
+> model + anchor, so an imitation run trained with `--arch transformer` carries
+> straight into RL without repeating the flag. `--arch`/`--dim`/… only matter
+> for a cold start.
 
 > **Rollout parallelism.** The `batch_maps × K` episode rollouts each step are
 > independent and CPU-bound (the NN runs on GPU, the PIBT sim on CPU). `--workers
@@ -243,8 +272,12 @@ Each run dir contains:
 | `reward_weight.yaml` | (RL only) snapshot of the reward weights used |
 
 **`config.yaml` fields**
-- `train_imitation`: `total_epochs`, `batch_size`, `learning_rate` (+ `data`, `no_pool`, `device`, `best_val_loss`).
-- `train_rl`: `total_iters`, `sigma`, `learning_rate`, `n_agents` (+ `batch_maps`, `K`, `anchor_w`, `engine`, `init`, `reward_weights`).
+- `train_imitation`: `total_epochs`, `batch_size`, `learning_rate` (+ `data`, `arch`, `no_pool`, `config`, `device`, `best_val_loss`).
+- `train_rl`: `total_iters`, `sigma`, `learning_rate`, `n_agents` (+ `batch_maps`, `K`, `anchor_w`, `engine`, `init`, `arch`, `reward_weights`).
+
+`arch` records the architecture (`unet`/`transformer`) and `config` holds its
+arch-specific hyperparameters (transformer `dim`/`depth`/`heads`/`dropout`;
+empty for the U-Net, which uses the `no_pool` flag instead).
 
 **TensorBoard scalars**
 - `train_imitation`: `loss/train`, `loss/val`.
@@ -256,8 +289,8 @@ View with: `tensorboard --logdir logs`
 ## Checkpoint files: `best.pt` vs `checkpoint.pt` vs `final.pt`
 
 Which `.pt` files appear depends on the script. They share the same dict format
-(`{model, no_pool}`, see [Data Formats](#runspt-checkpoints)) and differ only in
-*when* and *why* each is written:
+(`{model, arch, no_pool, config}`, see [Data Formats](#runspt-checkpoints)) and
+differ only in *when* and *why* each is written:
 
 | file | written by | when | how it's selected | use it as |
 |------|-----------|------|-------------------|-----------|
@@ -336,9 +369,12 @@ A `torch.save` dict written by `train_imitation.py` / `train_rl.py`:
 
 | key | type | meaning |
 |-----|------|---------|
-| `model` | `state_dict` | `PriorityUNet` weights. |
-| `no_pool` | `bool` | Architecture flag — `True` if the model was trained with `--no_pool` (full-res, no MaxPool). |
+| `model` | `state_dict` | Model weights (`PriorityUNet` or `PriorityTransformer`). |
+| `arch` | `str` | Architecture: `unet` or `transformer`. Absent in legacy checkpoints → treated as `unet`. |
+| `no_pool` | `bool` | U-Net flag — `True` if trained with `--no_pool` (full-res, no MaxPool). Unused by the transformer. |
+| `config` | `dict` | Arch-specific constructor kwargs (transformer `dim`/`depth`/`heads`/`dropout`; `{}` for the U-Net). |
 
-Load with `src.priority.model.load_model(path, device)`, which reads `no_pool`
-and rebuilds the matching architecture automatically. Legacy checkpoints without
-the `no_pool` key default to the pooled architecture.
+Load with `src.priority.model.load_model(path, device)`, which reads `arch`
+(then `no_pool`/`config`) and rebuilds the matching architecture automatically
+via `build_model`. Legacy checkpoints without `arch` default to the pooled
+U-Net, and ones without `no_pool` default to the pooled architecture.

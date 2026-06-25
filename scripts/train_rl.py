@@ -12,7 +12,7 @@ import torch
 from src.envs.grid import maze, random_forest
 from src.priority import features as features_mod
 from src.priority import model as model_mod
-from src.priority.model import PriorityUNet, predict_field
+from src.priority.model import build_model, predict_field
 from src.train.rl import rl_step
 from src.train.reward import RewardWeights
 from src.eval.benchmark import (make_eval_maps, make_instances, evaluate,
@@ -48,8 +48,14 @@ def main():
     ap.add_argument("--n_agents", type=int, default=8)
     ap.add_argument("--eval_every", type=int, default=25)
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    ap.add_argument("--arch", choices=["unet", "transformer"], default="unet",
+                    help="model architecture for cold start (ignored if --init sets it)")
     ap.add_argument("--no_pool", action="store_true",
                     help="ablation: full-res CNN (ignored if --init sets the arch)")
+    ap.add_argument("--dim", type=int, default=128, help="transformer token dim (cold start)")
+    ap.add_argument("--depth", type=int, default=4, help="transformer layers (cold start)")
+    ap.add_argument("--heads", type=int, default=4, help="transformer heads (cold start)")
+    ap.add_argument("--dropout", type=float, default=0.0, help="transformer dropout (cold start)")
     ap.add_argument("--workers", type=int, default=0,
                     help="parallel rollout workers (0/1 = serial; cpu engine only)")
     ap.add_argument("--engine", choices=["cpu", "vec"], default="cpu",
@@ -69,6 +75,7 @@ def main():
         "anchor_w": args.anchor_w,
         "engine": args.engine,
         "init": args.init,
+        "arch": args.arch,
         "reward_weights": weights.to_dict(),
     })
     exp.save_yaml("reward_weight.yaml", weights.to_dict())  # snapshot for reproducibility
@@ -77,23 +84,28 @@ def main():
     exp.log(f"reward weights: {weights.to_dict()}")
 
     dev = args.device
-    no_pool = args.no_pool
+    arch, no_pool = args.arch, args.no_pool
+    config = ({} if args.arch == "unet" else
+              dict(dim=args.dim, depth=args.depth, heads=args.heads, dropout=args.dropout))
     anchor = None
     if args.init and os.path.exists(args.init):
         ckpt = torch.load(args.init, map_location=dev)
-        no_pool = ckpt.get("no_pool", False)  # inherit arch from the init checkpoint
+        # inherit the full architecture from the init checkpoint
+        arch = ckpt.get("arch", "unet")
+        no_pool = ckpt.get("no_pool", False)
+        config = ckpt.get("config", {})
         sd = ckpt["model"]
-        model = PriorityUNet(pool=not no_pool).to(dev)
+        model = build_model(arch, no_pool=no_pool, **config).to(dev)
         model.load_state_dict(sd)
-        exp.log(f"warm-started from {args.init} (no_pool={no_pool})")
+        exp.log(f"warm-started from {args.init} (arch={arch}, no_pool={no_pool})")
         if args.anchor_w > 0:
-            anchor = PriorityUNet(pool=not no_pool).to(dev)
+            anchor = build_model(arch, no_pool=no_pool, **config).to(dev)
             anchor.load_state_dict(sd)
             anchor.eval()
             for p in anchor.parameters():
                 p.requires_grad_(False)
     else:
-        model = PriorityUNet(pool=not no_pool).to(dev)
+        model = build_model(arch, no_pool=no_pool, **config).to(dev)
     opt = torch.optim.Adam(model.parameters(), lr=args.lr)
     rng = np.random.default_rng(0)
 
@@ -124,7 +136,8 @@ def main():
         exp.log("using GPU-vectorized rollout engine (approximate solver)")
 
     def save(name):
-        ckpt = {"model": model.state_dict(), "no_pool": no_pool}
+        ckpt = {"model": model.state_dict(), "arch": arch,
+                "no_pool": no_pool, "config": config}
         torch.save(ckpt, exp.path(name))
         torch.save(ckpt, args.out)
 
