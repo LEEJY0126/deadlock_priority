@@ -64,8 +64,10 @@ pip install -r requirements.txt
 # 0. sanity check the env + baseline
 python scripts/smoke_test.py
 
-# 1. generate imitation labels (oracle search per map)
-python scripts/gen_dataset.py --out data/imitation.npz --n_maps 150
+# 1. generate imitation labels (oracle search per map). --oracle picks the PIBT
+#    deadlock-resolution mode used to score candidates; the headline model is
+#    trained in-distribution under "paper" (right-hand rule + livelock).
+python scripts/gen_dataset.py --out data/imitation.npz --n_maps 150 --oracle paper
 
 # 2. imitation pretraining -- the headline model is the Transformer (--arch
 #    transformer); omit --arch for the default U-Net. The architecture is recorded
@@ -74,22 +76,23 @@ python scripts/train_imitation.py --data data/imitation.npz \
     --arch transformer --out runs/imitation_transformer.pt
 
 # 3. RL fine-tuning (hybrid: warm-start from imitation, anchor to prevent forgetting;
-#    the arch is inherited from --init, so no need to repeat --arch)
-python scripts/train_rl.py --init runs/imitation_transformer.pt --out runs/rl_transformer.pt --iters 200
+#    the arch is inherited from --init. --oracle paper trains under the same
+#    dynamics used for eval and also drives best.pt selection.)
+python scripts/train_rl.py --init runs/imitation_transformer.pt --out runs/rl_transformer.pt --iters 200 --oracle paper
 
 #    faster rollouts (cpu, exact PIBT): parallelize over a process pool
-python scripts/train_rl.py --init runs/imitation_transformer.pt --out runs/rl_transformer.pt --iters 200 --workers 8
+python scripts/train_rl.py --init runs/imitation_transformer.pt --out runs/rl_transformer.pt --iters 200 --oracle paper --workers 8
 
 #    GPU-vectorized rollouts (GPU_vectorized branch): batch all episodes on the
 #    GPU. ~4.5x faster training here, but uses an *approximate* non-backtracking
 #    solver -- the learned field still transfers to PIBT (see docs/report_GPU-vectorized.md).
 python scripts/train_rl.py --init runs/imitation_transformer.pt --out runs/rl_transformer.pt --iters 200 --engine vec
 
-# 4. benchmark a checkpoint vs the MST baseline
-python scripts/evaluate.py --ckpt runs/rl_transformer.pt
+# 4. benchmark a checkpoint vs the MST baseline (match the training mode)
+python scripts/evaluate.py --ckpt runs/rl_transformer.pt --oracle paper
 
 # 5. watch it: animated MST-vs-learned episode on the same instance
-python scripts/simulate.py --ckpt runs/rl_transformer.pt --map narrow --seed 20 --max_steps 60
+python scripts/simulate.py --ckpt runs/rl_transformer.pt --map narrow --seed 76 --max_steps 60
 ```
 
 ## Experiment tracking & reward weights
@@ -158,34 +161,38 @@ to favor speed. The defaults reproduce the results below.
 ## Results (held-out, 8 agents, 21×21, 500 instances/kind = 100 maps × 5)
 
 Default **paper** deadlock resolution (right-hand rule + livelock). The headline
-model is the **Transformer** field, imitation → RL (`runs/rl_transformer.pt`,
-the best-by-success checkpoint), against the paper's MST baseline. `succ` =
-success rate (higher better), `mksp` = makespan, `flow` = flowtime (lower better):
+model is the **Transformer** field trained **fully in-distribution** — paper-mode
+oracle labels → paper-mode RL → paper-mode eval (`runs/rl_transformer.pt`,
+best-by-success). `succ` = success rate (higher better), `mksp` = makespan,
+`flow` = flowtime (lower better):
 
 | map | MST baseline — succ / mksp / flow | Learned (Transformer, imit→RL) — succ / mksp / flow |
 |-----|:---------------------------------:|:---------------------------------------------------:|
-| forest | 70.0% / 26.5 / 127.8 | **79.0%** / 25.9 / 126.4 |
-| wide   | 70.2% / 27.0 / 128.0 | **76.0%** / 25.7 / 125.2 |
-| narrow | 42.8% / 32.3 / 151.4 | **48.4%** / 29.8 / 143.8 |
+| forest | 70.0% / 26.5 / 127.8 | **79.4%** / 26.3 / 127.2 |
+| wide   | 70.2% / 27.0 / 128.0 | **76.0%** / 25.9 / 125.6 |
+| narrow | 42.8% / 32.3 / 151.4 | **51.8%** / 30.1 / 144.6 |
 
-The learned field wins on **all three metrics across all three maps**: +5.6–9.0pp
-success, plus lower makespan and flowtime everywhere (e.g. narrow 48.4% vs 42.8%,
-flowtime 143.8 vs 151.4). The faithful **right-hand-rule** deadlock branch already
+The learned field wins on **all three metrics across all three maps**: +5.8–9.0pp
+success, plus lower makespan and flowtime everywhere (e.g. narrow 51.8% vs 42.8%,
+flowtime 144.6 vs 151.4). The faithful **right-hand-rule** deadlock branch already
 lifts the *MST* narrow baseline to 42.8% (vs ~30% under livelock-only back-out),
 so the learned field's gain sits on top of an already-stronger baseline.
 
-**Architecture / training** (success rate; the best-by-success iterate per
-config):
+**Training in the evaluation dynamics helps** (success rate, `paper` eval). The
+in-distribution model above is trained under `paper`; an earlier model trained
+under `beta` (the legacy boost) and only *transferred* to `paper` eval is weaker
+on the deadlock-heavy narrow maps:
 
-| map | MST | CNN imitation | Transformer imitation | Transformer hybrid |
-|-----|:---:|:-------------:|:---------------------:|:------------------:|
-| forest | 70.0% | 78.2% | 77.4% | **79.0%** |
-| wide   | 70.2% | 71.4% | 74.4% | **76.0%** |
-| narrow | 42.8% | 46.4% | 46.4% | **48.4%** |
+| map | MST | beta-trained (transfer) | paper-trained (in-distribution) |
+|-----|:---:|:-----------------------:|:-------------------------------:|
+| forest | 70.0% | 79.0% | **79.4%** |
+| wide   | 70.2% | **76.0%** | **76.0%** |
+| narrow | 42.8% | 48.4% | **51.8%** |
 
-Both architectures' imitation fields already beat MST; **RL fine-tuning of the
-Transformer** adds the most and is best on every map. (Only the Transformer was
-RL-fine-tuned, so there is no CNN-hybrid column.)
+Matching train/eval dynamics adds **+3.4pp on narrow** (48.4→51.8) where the
+right-hand rule matters most. *Caveat:* the two checkpoints also differ in size
+(beta-trained `dim=128`, paper-trained `dim=64`), so this is indicative rather
+than a controlled ablation — but the smaller in-distribution model still wins.
 
 `runs/fields_rl_transformer.png` (from `scripts/visualize.py`) shows *why* the
 learned field helps: the MST field is piecewise-constant in coarse blocks (the
@@ -198,14 +205,14 @@ Reproduce: `python scripts/evaluate.py --ckpt runs/rl_transformer.pt --n_per_kin
 ### Watch the difference
 
 `scripts/simulate.py` runs the *same* instance under both fields. In this
-narrow-maze case (`--seed 20`) the MST priority **deadlocks** (7/8 agents home)
-while the learned Transformer field **solves it in 27 steps** (8/8). The top row
+narrow-maze case (`--seed 76`) the MST priority **deadlocks** (7/8 agents home)
+while the learned Transformer field **solves it in 26 steps** (8/8). The top row
 shows the raw priority maps (MST integer levels vs the learned smooth field); the
 bottom row animates the agents:
 
-![MST vs learned priority on a narrow maze](runs/sim_narrow_seed20_raw.gif)
+![MST vs learned priority on a narrow maze](runs/sim_narrow_seed76_raw.gif)
 
-Reproduce: `python scripts/simulate.py --ckpt runs/rl_transformer.pt --map narrow --seed 20 --max_steps 60 --raw`
+Reproduce: `python scripts/simulate.py --ckpt runs/rl_transformer.pt --map narrow --seed 76 --max_steps 60 --raw`
 
 ## Limitations / next steps
 
