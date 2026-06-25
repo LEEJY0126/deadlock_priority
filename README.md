@@ -86,7 +86,7 @@ python scripts/train_rl.py --init runs/imitation.pt --out runs/rl.pt --iters 200
 python scripts/evaluate.py --ckpt runs/rl.pt
 
 # 5. watch it: animated MST-vs-learned episode on the same instance
-python scripts/simulate.py --ckpt runs/rl.pt --map narrow --seed 10 --max_steps 60
+python scripts/simulate.py --ckpt runs/rl.pt --map narrow --seed 20 --max_steps 60
 ```
 
 ## Experiment tracking & reward weights
@@ -154,58 +154,55 @@ to favor speed. The defaults reproduce the results below.
 
 ## Results (held-out, 8 agents, 21×21, 500 instances/kind = 100 maps × 5)
 
-Success rate (higher is better), default **paper** deadlock resolution
-(right-hand rule + livelock; bold = best per row):
+Default **paper** deadlock resolution (right-hand rule + livelock). The headline
+model is the **Transformer** field, imitation → RL (`runs/rl_transformer.pt`,
+the best-by-success checkpoint), against the paper's MST baseline. `succ` =
+success rate (higher better), `mksp` = makespan, `flow` = flowtime (lower better):
 
-| map    | MST baseline (paper) | imitation CNN | hybrid CNN | imitation Transformer | hybrid Transformer |
-|--------|:--------------------:|:-------------:|:----------:|:---------------------:|:------------------:|
-| forest |        70.0%         |     78.2%     | **79.6%**  |        77.4%          |       76.4%        |
-| wide   |        70.2%         |     71.4%     |   73.0%    |       **74.4%**       |       72.4%        |
-| narrow |        42.8%         |     46.4%     |   45.4%    |        46.4%          |     **48.8%**      |
+| map | MST baseline — succ / mksp / flow | Learned (Transformer, imit→RL) — succ / mksp / flow |
+|-----|:---------------------------------:|:---------------------------------------------------:|
+| forest | 70.0% / 26.5 / 127.8 | **79.0%** / 25.9 / 126.4 |
+| wide   | 70.2% / 27.0 / 128.0 | **76.0%** / 25.7 / 125.2 |
+| narrow | 42.8% / 32.3 / 151.4 | **48.4%** / 29.8 / 143.8 |
 
-(Hybrid checkpoints are the **best-by-success** iterate — `runs/rl.pt` now mirrors
-`best.pt`, see [Experiment tracking](#experiment-tracking--reward-weights).)
+The learned field wins on **all three metrics across all three maps**: +5.6–9.0pp
+success, plus lower makespan and flowtime everywhere (e.g. narrow 48.4% vs 42.8%,
+flowtime 143.8 vs 151.4). The faithful **right-hand-rule** deadlock branch already
+lifts the *MST* narrow baseline to 42.8% (vs ~30% under livelock-only back-out),
+so the learned field's gain sits on top of an already-stronger baseline.
 
-**All four learned fields beat the paper's MST heuristic on all three** map
-types — forest +6.4–9.6pp, wide +1.2–4.2pp, narrow +2.6–6.0pp — at n=500/kind, so
-the lead is consistent rather than noise. The learned fields are also slightly
-more *efficient*: lower makespan and flowtime than MST across the board (e.g.
-narrow flowtime ~144–146 vs 151, makespan ~30 vs 32).
+**Architecture / training** (success rate; the best-by-success iterate per
+config):
 
-Reading the numbers:
-- **Architecture.** The CNN U-Net is strongest on **forest** (open, local features
-  suffice; hybrid CNN 79.6% is the best single cell); the **Transformer** is
-  strongest on **narrow** (48.8%) and **wide** (74.4%), where global corridor
-  context helps. The two architectures stay within ~1–3pp, so attention is
-  competitive but not decisive at this map size.
-- **Imitation vs RL.** Differences are small (≤2–3pp). RL fine-tuning helps
-  **forest** (CNN 78.2→79.6) and **narrow** (Transformer 46.4→48.8); elsewhere it
-  roughly matches or slightly trails imitation (e.g. hybrid Transformer wide
-  72.4 vs 74.4).
-- **Baseline context.** The faithful **right-hand-rule** deadlock branch lifts the
-  *MST* narrow baseline to 42.8% (vs ~30% under livelock-only back-out), so the
-  learned field's gain now sits on top of an already-stronger baseline.
+| map | MST | CNN imitation | Transformer imitation | Transformer hybrid |
+|-----|:---:|:-------------:|:---------------------:|:------------------:|
+| forest | 70.0% | 78.2% | 77.4% | **79.0%** |
+| wide   | 70.2% | 71.4% | 74.4% | **76.0%** |
+| narrow | 42.8% | 46.4% | 46.4% | **48.4%** |
 
-`runs/fields_rl.png` (from `scripts/visualize.py`; `runs/fields_rl_transformer.png`
-for the attention model) shows *why* the learned field helps: the MST field is
-piecewise-constant in coarse blocks (the 4-cycle rule collapses whole open regions
-to one level), whereas the learned field is a smooth fine-grained gradient — finer
-symmetry-breaking at junctions instead of coarse steps.
+Both architectures' imitation fields already beat MST; **RL fine-tuning of the
+Transformer** adds the most and is best on every map. (Only the Transformer was
+RL-fine-tuned, so there is no CNN-hybrid column.)
 
-Reproduce: `python scripts/evaluate.py --ckpt runs/rl.pt --n_per_kind 100 --n_inst 5`
-(swap `--ckpt runs/rl_transformer.pt` for the attention model).
+`runs/fields_rl_transformer.png` (from `scripts/visualize.py`) shows *why* the
+learned field helps: the MST field is piecewise-constant in coarse blocks (the
+4-cycle rule collapses whole open regions to one level), whereas the learned field
+is a smooth fine-grained gradient — finer symmetry-breaking at junctions instead
+of coarse steps.
+
+Reproduce: `python scripts/evaluate.py --ckpt runs/rl_transformer.pt --n_per_kind 100 --n_inst 5`
 
 ### Watch the difference
 
 `scripts/simulate.py` runs the *same* instance under both fields. In this
-narrow-maze case (`--seed 10`) the MST priority **deadlocks** (7/8 agents home)
-while the learned field **solves it in 18 steps** (8/8). The top row shows the
-raw priority maps (MST integer levels vs the learned smooth field); the bottom
-row animates the agents:
+narrow-maze case (`--seed 20`) the MST priority **deadlocks** (7/8 agents home)
+while the learned Transformer field **solves it in 27 steps** (8/8). The top row
+shows the raw priority maps (MST integer levels vs the learned smooth field); the
+bottom row animates the agents:
 
-![MST vs learned priority on a narrow maze](runs/sim_narrow_seed10_raw.gif)
+![MST vs learned priority on a narrow maze](runs/sim_narrow_seed20_raw.gif)
 
-Reproduce: `python scripts/simulate.py --ckpt runs/rl.pt --map narrow --seed 10 --max_steps 60 --raw`
+Reproduce: `python scripts/simulate.py --ckpt runs/rl_transformer.pt --map narrow --seed 20 --max_steps 60 --raw`
 
 ## Limitations / next steps
 

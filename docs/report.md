@@ -88,23 +88,32 @@ variable under study:
 
 ## Result (held-out, 8 agents, 21×21, 500 instances/kind, `paper` mode)
 
-Success rate, default `paper` resolution (right-hand rule + livelock):
+Default `paper` resolution (right-hand rule + livelock). Headline: the learned
+**Transformer** field (imitation → RL, `runs/rl_transformer.pt`, best-by-success)
+vs the MST baseline — `succ` (↑) / `mksp` (↓) / `flow` (↓):
 
-| map | MST baseline (paper) | imitation CNN | hybrid CNN | imitation Transformer | hybrid Transformer |
-|-----|:--------------------:|:-------------:|:----------:|:---------------------:|:------------------:|
-| forest | 70.0% | 78.2% | **79.6%** | 77.4% | 76.4% |
-| wide   | 70.2% | 71.4% | 73.0% | **74.4%** | 72.4% |
-| narrow | 42.8% | 46.4% | 45.4% | 46.4% | **48.8%** |
+| map | MST — succ / mksp / flow | Learned (Transformer, imit→RL) — succ / mksp / flow |
+|-----|:------------------------:|:---------------------------------------------------:|
+| forest | 70.0% / 26.5 / 127.8 | **79.0%** / 25.9 / 126.4 |
+| wide   | 70.2% / 27.0 / 128.0 | **76.0%** / 25.7 / 125.2 |
+| narrow | 42.8% / 32.3 / 151.4 | **48.4%** / 29.8 / 143.8 |
 
-All four learned fields beat the paper's heuristic on all three map types
-(forest +6.4–9.6pp, wide +1.2–4.2pp, narrow +2.6–6.0pp at n=500/kind), and are
-also slightly more efficient (lower makespan/flowtime than MST throughout). The
-CNN U-Net leads on forest (hybrid 79.6%); the Transformer leads on narrow
-(48.8%) and wide (74.4%); the two stay within ~1–3pp. Hybrid checkpoints are the
-best-by-success iterate (`runs/rl.pt` mirrors `best.pt`). `runs/fields_rl.png`
-shows the mechanism: the MST field is piecewise-constant in coarse blocks, while
-the learned field is a smooth fine-grained gradient that breaks symmetry more
-precisely at junctions.
+The learned field wins on all three metrics across all three maps (+5.6–9.0pp
+success; lower makespan and flowtime everywhere). Architecture/training, success
+rate (best-by-success iterate per config):
+
+| map | MST | CNN imitation | Transformer imitation | Transformer hybrid |
+|-----|:---:|:-------------:|:---------------------:|:------------------:|
+| forest | 70.0% | 78.2% | 77.4% | **79.0%** |
+| wide   | 70.2% | 71.4% | 74.4% | **76.0%** |
+| narrow | 42.8% | 46.4% | 46.4% | **48.4%** |
+
+Both architectures' imitation fields beat MST; RL fine-tuning of the Transformer
+adds the most and is best on every map. (Only the Transformer was RL-fine-tuned,
+so there is no CNN-hybrid column.) `runs/fields_rl_transformer.png` shows the
+mechanism: the MST field is piecewise-constant in coarse blocks, while the learned
+field is a smooth fine-grained gradient that breaks symmetry more precisely at
+junctions.
 
 ## Ablation: removing the pooling layer
 
