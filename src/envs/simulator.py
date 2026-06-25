@@ -95,13 +95,19 @@ class Simulator:
 
         In legacy ``beta`` mode a dynamic anti-starvation boost proportional to
         stuck time is added; in ``paper`` mode the boost is omitted (deadlocks are
-        resolved by the explicit yield instead)."""
+        resolved by the explicit yield instead).
+
+        Agents that have reached their goal get ``-inf`` priority so they sort
+        below *every* en-route agent and are always displaceable (paper Eq. 13a's
+        intent). A plain 0 is not enough here: the field is z-scored per map, so an
+        en-route agent in a low-priority region can have a negative priority and
+        would otherwise be unable to push a finished agent off a cell on its path."""
         n = self.n
         prio = np.zeros(n, dtype=np.float64)
         base = np.array([self.field[p[0], p[1]] for p in pos], dtype=np.float64)
         for i in range(n):
             if arrived[i]:
-                prio[i] = 0.0  # reached goal -> yield
+                prio[i] = -np.inf  # reached goal -> yield to all en-route agents
                 continue
             # tie-break: penalise returning to a lower-priority node (anti-oscillation)
             di = (i / n) if base[i] >= prev_base[i] else (1.0 + i / n)
