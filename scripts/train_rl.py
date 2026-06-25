@@ -121,8 +121,11 @@ def main():
     eval_inst = make_instances(eval_maps, n_agents=args.n_agents, n_inst=3)
 
     def bench(tag, step=None):
+        # best.pt selection + logged metrics use the same deadlock-resolution
+        # mode as the training rollouts (--oracle), so the chosen iterate is best
+        # under the dynamics it was trained on.
         provider = lambda g: predict_field(model, g, device=dev)
-        report = evaluate(provider, eval_inst)
+        report = evaluate(provider, eval_inst, yield_mode=args.oracle)
         print_report(f"{tag}", report)
         if step is not None:
             for kind, r in report.items():
@@ -135,7 +138,7 @@ def main():
         """Headline metric for best-checkpoint selection: mean success over kinds."""
         return sum(r["success_rate"] for r in report.values()) / len(report)
 
-    print_report("MST baseline", evaluate(baseline_provider, eval_inst))
+    print_report("MST baseline", evaluate(baseline_provider, eval_inst, yield_mode=args.oracle))
     init_report = bench("learned @ init", step=0)
 
     # Rollouts are pure-CPU NumPy and independent across (map, sample); a spawn
