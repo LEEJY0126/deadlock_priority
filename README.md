@@ -32,20 +32,29 @@ reimplementing the continuous ABVC + SFC + QP stack.
 
 ```
 map (occupancy) ──► priority field ──► PIBT per-step ──► episode ──► metrics
-                     (MST or CNN)        (+ dynamic boost)            success/makespan/flowtime
+                  (MST / CNN / Transformer)  (+ yield)             success/makespan/flowtime
 ```
 
 - `src/envs/grid.py`     — occupancy grid, BFS distances, random-forest & braided-maze generators
 - `src/envs/pibt.py`     — PIBT (Priority Inheritance with Backtracking)
 - `src/envs/simulator.py`— episode runner; assembles agent priority from the field
-  (Eq. 13) plus a gentle PIBT anti-starvation boost (applied identically to every
-  method, so the **field is the only variable**)
+  (Eq. 13) and resolves deadlocks with the paper's two-branch scheme (Alg. 3): a
+  **deadlock** (frozen agent blocked head-on, Eq. 14) triggers the **right-hand
+  rule** (Eq. 15 — sidestep perpendicular and away from the blocker); a
+  **livelock** (stuck lower-priority agent, Eq. 18) backs out to its
+  lowest-priority neighbour (Alg. 3 lines 11-12). A legacy `yield_mode="beta"`
+  push-through boost is also available. Either way the mechanism is applied
+  identically to every method, so the **field is the only variable**.
 - `src/priority/mst_baseline.py` — the paper's MST position-priority field (the baseline to beat)
 - `src/priority/model.py`        — `PriorityUNet`: CNN mapping map features → per-cell field
+- `src/priority/model_transformer.py` — `PriorityTransformer`: CNN stem + self-attention
+  alternative (`--arch transformer`); same map-features → per-cell field contract
 - `src/priority/features.py`     — map-only input channels (no live positions ⇒ comms-free)
 - `src/train/oracle.py`          — candidate-bank search producing imitation labels
 - `src/train/rl.py`              — group-baseline REINFORCE (GRPO-style) over whole-field actions
+- `src/train/reward.py`          — configurable reward weights (`reward_weight.yaml`)
 - `src/eval/benchmark.py`        — apples-to-apples held-out comparison
+- `src/utils/experiment.py`      — per-run logging dir (config, TensorBoard, checkpoints, model snapshot)
 
 ## Quickstart
 
@@ -58,15 +67,56 @@ python scripts/smoke_test.py
 # 1. generate imitation labels (oracle search per map)
 python scripts/gen_dataset.py --out data/imitation.npz --n_maps 150
 
-# 2. imitation pretraining
-python scripts/train_imitation.py --data data/imitation.npz --out runs/imitation.pt
+# 2. imitation pretraining -- the headline model is the Transformer (--arch
+#    transformer); omit --arch for the default U-Net. The architecture is recorded
+#    in the checkpoint and inherited automatically through RL / eval / viz.
+python scripts/train_imitation.py --data data/imitation.npz \
+    --arch transformer --out runs/imitation_transformer.pt
 
-# 3. RL fine-tuning (hybrid: warm-start from imitation, anchor to prevent forgetting)
-python scripts/train_rl.py --init runs/imitation.pt --out runs/rl.pt --iters 200
+# 3. RL fine-tuning (hybrid: warm-start from imitation, anchor to prevent forgetting;
+#    the arch is inherited from --init, so no need to repeat --arch)
+python scripts/train_rl.py --init runs/imitation_transformer.pt --out runs/rl_transformer.pt --iters 200
+
+#    faster rollouts (cpu, exact PIBT): parallelize over a process pool
+python scripts/train_rl.py --init runs/imitation_transformer.pt --out runs/rl_transformer.pt --iters 200 --workers 8
+
+#    GPU-vectorized rollouts (GPU_vectorized branch): batch all episodes on the
+#    GPU. ~4.5x faster training here, but uses an *approximate* non-backtracking
+#    solver -- the learned field still transfers to PIBT (see docs/report_GPU-vectorized.md).
+python scripts/train_rl.py --init runs/imitation_transformer.pt --out runs/rl_transformer.pt --iters 200 --engine vec
 
 # 4. benchmark a checkpoint vs the MST baseline
-python scripts/evaluate.py --ckpt runs/rl.pt
+python scripts/evaluate.py --ckpt runs/rl_transformer.pt
+
+# 5. watch it: animated MST-vs-learned episode on the same instance
+python scripts/simulate.py --ckpt runs/rl_transformer.pt --map narrow --seed 20 --max_steps 60
 ```
+
+## Experiment tracking & reward weights
+
+Each `train_imitation` / `train_rl` run writes a self-contained directory
+`logs/{script_name}_{timestamp}/` (gitignored):
+
+| file | contents |
+|------|----------|
+| `config.yaml` | hyperparameters — imitation: `total_epochs`, `batch_size`, `learning_rate`; RL: `total_iters`, `sigma`, `learning_rate`, `n_agents`, … |
+| `train.log` | progress (also echoed to stdout) |
+| `events.out.tfevents.*` | TensorBoard scalars (`tensorboard --logdir logs`) |
+| `model.py`, `features.py` | snapshots of the model architecture + input features used for the run |
+| `*.pt` | checkpoints — `best.pt` (best-selected, mirrored to `--out`), plus RL's `checkpoint.pt`/`final.pt` (run dir only) |
+| `reward_weight.yaml` | (RL) snapshot of the reward weights used |
+
+RL reward shaping is configured in the tracked **`reward_weight.yaml`** at the
+repo root (`--reward_weights` to override):
+
+```yaml
+success: 2.0     # weight on solving (all agents reach goals)
+makespan: 0.5    # penalty on team finish time
+flowtime: 0.5    # penalty on total effort
+```
+
+Raise `success` to push deadlock resolution harder; raise `makespan`/`flowtime`
+to favor speed. The defaults reproduce the results below.
 
 ## Design notes / decisions
 
@@ -74,12 +124,30 @@ python scripts/evaluate.py --ckpt runs/rl.pt
   `narrow` maze (1-wide). Mazes are **braided** (`braid=`) — a perfect/tree maze
   leaves no room for two agents to pass in a 1-wide corridor, making it
   near-unsolvable rather than hard; braiding adds alcoves/loops.
-- **Dynamic boost (`beta`).** A perfectly static field cannot resolve a 1-wide
-  corridor (agents must back out — PIBT's reachability needs a starvation-
-  breaking term). We add a small boost ∝ stuck-time so the field still sets the
-  base ordering while no agent starves. Fields are scale-normalized before the
-  boost so `beta` affects the integer MST field and the learned softplus field
-  equally.
+- **Deadlock resolution (`yield_mode`).** A perfectly static field cannot resolve
+  a 1-wide corridor — agents must move aside. The default `"paper"` mode ports
+  **both** branches of the paper's Alg. 3:
+  - **Deadlock → right-hand rule (Alg. 3 lines 6-9, Eq. 14→15).** Detected
+    *before* the MAPF step: an agent that is frozen (zero grid velocity, Eq. 14a)
+    with a neighbour occupying the cell directly ahead toward its goal (Eq. 14b)
+    is routed by the **right-hand rule** — it sidesteps perpendicular to, and away
+    from, the blocker (Eq. 15). Priority-independent, so a head-on pair both fire
+    and pass on consistent opposite sides. Toggle with `deadlock_resolution`.
+  - **Livelock → lowest-priority neighbour (Alg. 3 lines 11-13, Eq. 18).** The
+    fallback after MAPF: a stuck *lower*-priority agent blocked by a
+    higher-priority neighbour has its subgoal reassigned to the **lowest-priority
+    adjacent node**, so it retreats to make room. (The *limited-sensing* conflict,
+    Eq. 19, has nothing to fire on under full observability, so only the Eq. 18
+    livelock condition is ported.)
+
+  Deadlock takes precedence (Alg. 3 returns at line 8 before line 11). A legacy
+  `"beta"` mode instead *raises* a stuck agent's priority so it pushes through;
+  it resolves more deadlocks in this centralized PIBT grid but is less faithful to
+  the paper. Training is pinned to `"beta"` (it is the more forgiving signal for
+  RL); benchmark + visualization use `"paper"`. Fields are scale-normalized first
+  so either mechanism treats the integer MST field and the learned softplus field
+  equally. Grid adaptations of the continuous Eq. 14/15 thresholds (`vth`, `dth`,
+  `dr`) are documented in the `simulator.py` module docstring.
 - **Imitation target.** The optimal position-priority field is intractable, so
   the oracle scores a bank of candidate fields (MST rooted at different cells +
   geometry baselines) by simulation and keeps the best — a cheap proxy label.
@@ -87,27 +155,57 @@ python scripts/evaluate.py --ckpt runs/rl.pt
   episode reward directly. An L2 anchor to the imitation logits curbs
   catastrophic forgetting.
 
-## Results (held-out, 8 agents, 21×21, 60 instances/kind)
+## Results (held-out, 8 agents, 21×21, 500 instances/kind = 100 maps × 5)
 
-Success rate (higher is better):
+Default **paper** deadlock resolution (right-hand rule + livelock). The headline
+model is the **Transformer** field, imitation → RL (`runs/rl_transformer.pt`,
+the best-by-success checkpoint), against the paper's MST baseline. `succ` =
+success rate (higher better), `mksp` = makespan, `flow` = flowtime (lower better):
 
-| map    | MST baseline (paper) | imitation CNN | **hybrid (imitation→RL)** |
-|--------|:--------------------:|:-------------:|:-------------------------:|
-| forest |        90.0%         |     88.3%     |         **91.7%**         |
-| wide   |        81.7%         |     86.7%     |         **90.0%**         |
-| narrow |        30.0%         |     45.0%     |         **46.7%**         |
+| map | MST baseline — succ / mksp / flow | Learned (Transformer, imit→RL) — succ / mksp / flow |
+|-----|:---------------------------------:|:---------------------------------------------------:|
+| forest | 70.0% / 26.5 / 127.8 | **79.0%** / 25.9 / 126.4 |
+| wide   | 70.2% / 27.0 / 128.0 | **76.0%** / 25.7 / 125.2 |
+| narrow | 42.8% / 32.3 / 151.4 | **48.4%** / 29.8 / 143.8 |
 
-The hybrid learned field beats the paper's MST heuristic on **all three** map
-types, with the largest gains exactly where deadlocks dominate (wide +8.3pp,
-narrow +16.7pp). Imitation alone already beats the baseline on the congested
-maps; RL recovers the small forest regression and adds further on wide/narrow.
+The learned field wins on **all three metrics across all three maps**: +5.6–9.0pp
+success, plus lower makespan and flowtime everywhere (e.g. narrow 48.4% vs 42.8%,
+flowtime 143.8 vs 151.4). The faithful **right-hand-rule** deadlock branch already
+lifts the *MST* narrow baseline to 42.8% (vs ~30% under livelock-only back-out),
+so the learned field's gain sits on top of an already-stronger baseline.
 
-`runs/fields.png` (from `scripts/visualize.py`) shows *why*: the MST field is
-piecewise-constant in coarse blocks (the 4-cycle rule collapses whole open
-regions to one level), whereas the learned field is a smooth fine-grained
-gradient — finer symmetry-breaking at junctions instead of coarse steps.
+**Architecture / training** (success rate; the best-by-success iterate per
+config):
 
-Reproduce: `python scripts/evaluate.py --ckpt runs/rl.pt --n_per_kind 12 --n_inst 5`
+| map | MST | CNN imitation | Transformer imitation | Transformer hybrid |
+|-----|:---:|:-------------:|:---------------------:|:------------------:|
+| forest | 70.0% | 78.2% | 77.4% | **79.0%** |
+| wide   | 70.2% | 71.4% | 74.4% | **76.0%** |
+| narrow | 42.8% | 46.4% | 46.4% | **48.4%** |
+
+Both architectures' imitation fields already beat MST; **RL fine-tuning of the
+Transformer** adds the most and is best on every map. (Only the Transformer was
+RL-fine-tuned, so there is no CNN-hybrid column.)
+
+`runs/fields_rl_transformer.png` (from `scripts/visualize.py`) shows *why* the
+learned field helps: the MST field is piecewise-constant in coarse blocks (the
+4-cycle rule collapses whole open regions to one level), whereas the learned field
+is a smooth fine-grained gradient — finer symmetry-breaking at junctions instead
+of coarse steps.
+
+Reproduce: `python scripts/evaluate.py --ckpt runs/rl_transformer.pt --n_per_kind 100 --n_inst 5`
+
+### Watch the difference
+
+`scripts/simulate.py` runs the *same* instance under both fields. In this
+narrow-maze case (`--seed 20`) the MST priority **deadlocks** (7/8 agents home)
+while the learned Transformer field **solves it in 27 steps** (8/8). The top row
+shows the raw priority maps (MST integer levels vs the learned smooth field); the
+bottom row animates the agents:
+
+![MST vs learned priority on a narrow maze](runs/sim_narrow_seed20_raw.gif)
+
+Reproduce: `python scripts/simulate.py --ckpt runs/rl_transformer.pt --map narrow --seed 20 --max_steps 60 --raw`
 
 ## Limitations / next steps
 

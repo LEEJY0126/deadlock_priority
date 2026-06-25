@@ -58,10 +58,30 @@ class PriorityUNet(nn.Module):
         return F.interpolate(x, size=ref.shape[-2:], mode="nearest")
 
 
+def build_model(arch="unet", no_pool=False, **config):
+    """Construct a fresh priority model by architecture name.
+
+    ``arch="unet"`` -> :class:`PriorityUNet` (honors ``no_pool``); ``"transformer"``
+    -> :class:`~.model_transformer.PriorityTransformer` (kwargs in ``config``).
+    """
+    if arch == "transformer":
+        from .model_transformer import PriorityTransformer  # lazy: avoids cycle
+        return PriorityTransformer(**config)
+    if arch == "unet":
+        return PriorityUNet(pool=not no_pool)
+    raise ValueError(f"unknown arch {arch!r}")
+
+
 def load_model(path, device="cpu"):
-    """Rebuild a PriorityUNet from a checkpoint, honoring its stored arch flags."""
+    """Rebuild a priority model from a checkpoint, honoring its stored arch flags.
+
+    Dispatches on the checkpoint's ``arch`` key (``"unet"``/``"transformer"``);
+    legacy checkpoints without it default to the pooled U-Net.
+    """
     ckpt = torch.load(path, map_location=device)
-    model = PriorityUNet(pool=not ckpt.get("no_pool", False)).to(device)
+    model = build_model(ckpt.get("arch", "unet"),
+                        no_pool=ckpt.get("no_pool", False),
+                        **ckpt.get("config", {})).to(device)
     model.load_state_dict(ckpt["model"])
     return model
 

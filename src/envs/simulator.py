@@ -4,6 +4,37 @@ The priority field (H, W) is the only thing that differs between the MST baselin
 and a learned model. Agent priorities are assembled from the field exactly as in
 the paper (Eq. 13): priority at the current node, a small position-based
 tie-break that damps oscillation, and zero priority once an agent is at its goal.
+
+Deadlock resolution (``yield_mode``):
+
+- ``"paper"`` (default): the paper's two-branch resolution from Alg. 3, both
+  ported to the grid:
+    * **Deadlock (Alg. 3 lines 6-9, Eq. 14 -> Eq. 15).** Detected *before* the
+      MAPF step: an agent that is frozen (zero grid velocity, Eq. 14a) and has a
+      neighbour occupying the cell directly ahead toward its goal (Eq. 14b) is
+      routed by the **right-hand rule** -- it sidesteps perpendicular to the
+      blocker and away from it (Eq. 15), so a head-on pair passes on consistent
+      opposite sides. Fires regardless of relative priority.
+    * **Livelock / limited-sensing (Alg. 3 lines 11-13, Eq. 18 / Eq. 19).** The
+      fallback after MAPF: a stuck *lower*-priority agent blocked by a
+      higher-priority neighbour has its subgoal reassigned to the lowest-priority
+      adjacent node and backs out. (Eq. 19's limited-sensing trigger has nothing
+      to fire on under full observability, so only the Eq. 18 livelock condition
+      is ported.)
+  The deadlock branch takes precedence (Alg. 3 returns at line 8 before line 11).
+- ``"beta"`` (legacy): a PIBT anti-starvation boost that instead raises a stuck
+  agent's priority so it pushes through. Kept for the training engine and A/B.
+
+Either way the mechanism is applied identically to every method, so the priority
+field remains the only variable.
+
+Grid adaptations of the continuous Eq. 14/15 thresholds: ``vth`` (near-zero
+velocity) -> "did not change cell on the previous step"; ``dth`` (touching
+distance, < one cell) -> "occupies an adjacent cell"; ``dr`` repulsive distance
+-> ``repulsive_dist`` cells. The cross product n_z x n_{i,j} is taken in a
+right-handed frame (col = +x, up = +y), giving the in-plane 90 deg rotation
+``(dr, dc) -> (-dc, dr)``; the sign is shared by all agents, which is what makes
+the symmetry-breaking consistent.
 """
 from __future__ import annotations
 
@@ -27,7 +58,9 @@ class EpisodeResult:
 
 class Simulator:
     def __init__(self, gmap: GridMap, starts, goals, max_steps=256,
-                 alpha=0.3, beta=0.3, stall_limit=None, log_positions=False):
+                 alpha=0.3, beta=0.3, stall_limit=None, log_positions=False,
+                 yield_mode="paper", yield_patience=1,
+                 deadlock_resolution=True, repulsive_dist=1.0):
         assert len(starts) == len(goals)
         self.gmap = gmap
         self.starts = list(starts)
@@ -35,10 +68,22 @@ class Simulator:
         self.n = len(starts)
         self.max_steps = max_steps
         self.alpha = alpha  # tie-break weight, in (0, 0.5) per the paper
-        # beta: PIBT dynamic anti-starvation boost per stuck step. Prevents
-        # permanent starvation in narrow corridors (restores PIBT reachability)
-        # while the field still sets the base ordering. Applied identically to
-        # every method so the priority field remains the only variable.
+        # yield_mode selects the deadlock-resolution mechanism (see module docs).
+        assert yield_mode in ("paper", "beta")
+        self.yield_mode = yield_mode
+        # paper-mode deadlock branch (Alg. 3 lines 6-9): the right-hand rule. On
+        # by default for fidelity; disable to ablate it back to livelock-only.
+        self.deadlock_resolution = deadlock_resolution
+        self.repulsive_dist = repulsive_dist  # d_r in Eq. 15, in grid cells
+        # cached coordinate grids for building right-hand-rule cost fields
+        self._RR, self._CC = np.mgrid[0:gmap.H, 0:gmap.W].astype(np.float64)
+        # yield_patience: stuck steps before a blocked lower-priority agent backs
+        # out (paper mode). Eq. 18 triggers on oscillation; a small patience
+        # avoids yielding before PIBT's own backtracking gets a chance.
+        self.yield_patience = yield_patience
+        # beta: PIBT dynamic anti-starvation boost per stuck step (legacy mode).
+        # Raises a stuck agent's priority so it pushes through, restoring PIBT
+        # reachability in narrow corridors. Ignored when yield_mode == "paper".
         self.beta = beta  # default chosen as a gentle nudge (see run() scaling)
         self.stall_limit = stall_limit or max(20, 4 * (gmap.H + gmap.W))
         self.log_positions = log_positions
@@ -46,8 +91,11 @@ class Simulator:
         self.pibt = PIBT(gmap, self.goal_dist)
 
     def _agent_priorities(self, pos, prev_base, arrived, stuck):
-        """Assemble per-agent priority from the position-priority field (Eq. 13)
-        plus a PIBT dynamic anti-starvation boost proportional to stuck time."""
+        """Assemble per-agent priority from the position-priority field (Eq. 13).
+
+        In legacy ``beta`` mode a dynamic anti-starvation boost proportional to
+        stuck time is added; in ``paper`` mode the boost is omitted (deadlocks are
+        resolved by the explicit yield instead)."""
         n = self.n
         prio = np.zeros(n, dtype=np.float64)
         base = np.array([self.field[p[0], p[1]] for p in pos], dtype=np.float64)
@@ -57,8 +105,77 @@ class Simulator:
                 continue
             # tie-break: penalise returning to a lower-priority node (anti-oscillation)
             di = (i / n) if base[i] >= prev_base[i] else (1.0 + i / n)
-            prio[i] = base[i] + self.alpha * di + self.beta * stuck[i]
+            prio[i] = base[i] + self.alpha * di
+            if self.yield_mode == "beta":
+                prio[i] += self.beta * stuck[i]
         return prio, base
+
+    def _yielders(self, pos, prio, arrived, stuck):
+        """Grid-adapted livelock detection (paper Eq. 18 / Alg. 3 line 11).
+
+        An agent yields when it is (a) not at its goal, (b) stuck for at least
+        ``yield_patience`` steps (no progress / oscillation proxy, Eq. 18a-b),
+        and (c) adjacent to a higher-priority agent that is still en route
+        (Eq. 18c-d). Such agents back out to their lowest-priority neighbour.
+        Returns a boolean array over agents."""
+        n = self.n
+        yld = np.zeros(n, dtype=bool)
+        posset = {pos[j]: j for j in range(n)}
+        for i in range(n):
+            if arrived[i] or stuck[i] < self.yield_patience:
+                continue
+            for u in self.gmap.neighbors(pos[i]):
+                j = posset.get(u)
+                if j is None or arrived[j]:
+                    continue
+                if prio[j] > prio[i]:  # blocked by a higher-priority neighbour
+                    yld[i] = True
+                    break
+        return yld
+
+    def _deadlocked(self, pos, last_pos, arrived):
+        """Deadlock detection (paper Eq. 14), grid-adapted. Alg. 3 line 6.
+
+        Agent i is deadlocked when it is (a) not at goal, (b) frozen -- it did
+        not change cell on the previous step (Eq. 14a, ``‖v̂‖ < vth``), and
+        (c) the cell directly ahead toward its goal is occupied by another
+        en-route agent j (Eq. 14b: an adjacent neighbour within ``dth`` that lies
+        in the subgoal direction). Returns ``blocker[i] = j`` (the obstructing
+        agent, for Eq. 15) or ``-1`` if i is not deadlocked. Note this does *not*
+        compare priorities -- a head-on pair both detect it and pass on opposite
+        sides."""
+        n = self.n
+        occ_by = {pos[j]: j for j in range(n)}
+        blocker = [-1] * n
+        for i in range(n):
+            if arrived[i] or pos[i] != last_pos[i]:  # (a) at goal / (b) moved
+                continue
+            gi = self.goal_dist[i]
+            di = gi[pos[i][0], pos[i][1]]
+            best_j, best_d = -1, None
+            for u in self.gmap.neighbors(pos[i]):
+                du = gi[u[0], u[1]]
+                if du >= di:           # only cells *ahead* toward the goal
+                    continue
+                j = occ_by.get(u)
+                if j is not None and not arrived[j] and (best_d is None or du < best_d):
+                    best_j, best_d = j, du
+            blocker[i] = best_j
+        return blocker
+
+    def _right_hand_cost(self, p_i, p_j):
+        """Right-hand-rule subgoal as a per-agent cost field (paper Eq. 15).
+
+        Builds the displaced subgoal ``g = p_i + d_r (n_z x n_{i,j}) + d_r n_{i,j}``
+        and returns a (H, W) cost (squared distance to ``g``) so PIBT steps agent
+        i to the free neighbour nearest ``g`` -- i.e. perpendicular to, and away
+        from, the blocker j."""
+        a = np.array([p_i[0] - p_j[0], p_i[1] - p_j[1]], dtype=np.float64)
+        a /= np.linalg.norm(a) + 1e-9          # n_{i,j}: unit vector j -> i
+        perp = np.array([-a[1], a[0]])          # n_z x n_{i,j}: 90 deg in-plane
+        disp = self.repulsive_dist * (a + perp)
+        g_r, g_c = p_i[0] + disp[0], p_i[1] + disp[1]
+        return (self._RR - g_r) ** 2 + (self._CC - g_c) ** 2
 
     def run(self, priority_field: np.ndarray, rng=None) -> EpisodeResult:
         # Normalize the field to unit spread over free cells so the tie-break
@@ -81,11 +198,30 @@ class Simulator:
         makespan = None
         stuck = np.zeros(self.n, dtype=np.float64)
         prev_gdist = np.array([self.goal_dist[i][pos[i]] for i in range(self.n)])
+        last_pos = list(pos)  # configuration before the previous step (Eq. 14a)
 
         for t in range(1, self.max_steps + 1):
             arrived = [pos[i] == self.goals[i] for i in range(self.n)]
             prio, base = self._agent_priorities(pos, prev_base, arrived, stuck)
-            pos = self.pibt.step(pos, prio, rng=rng)
+            # paper resolution: deadlock (Eq. 14 -> right-hand rule, Eq. 15) takes
+            # precedence over the livelock fallback (Eq. 18 -> lowest-priority
+            # neighbour). Both are expressed as per-agent PIBT cost overrides.
+            cost = None
+            if self.yield_mode == "paper":
+                cost = [None] * self.n
+                if self.deadlock_resolution:
+                    blocker = self._deadlocked(pos, last_pos, arrived)
+                    for i in range(self.n):
+                        if blocker[i] >= 0:
+                            cost[i] = self._right_hand_cost(pos[i], pos[blocker[i]])
+                yld = self._yielders(pos, prio, arrived, stuck)
+                for i in range(self.n):
+                    if cost[i] is None and yld[i]:
+                        cost[i] = self.field
+                if all(c is None for c in cost):
+                    cost = None
+            last_pos = list(pos)
+            pos = self.pibt.step(pos, prio, rng=rng, cost=cost)
             prev_base = np.array([self.field[p[0], p[1]] for p in pos])
             # update per-agent stuck counter (reset on progress toward own goal)
             gdist = np.array([self.goal_dist[i][pos[i]] for i in range(self.n)])

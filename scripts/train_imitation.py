@@ -11,8 +11,11 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from src.envs.grid import GridMap
+from src.priority import features as features_mod
 from src.priority.features import build_features
-from src.priority.model import PriorityUNet
+from src.priority import model as model_mod
+from src.priority.model import build_model
+from src.utils.experiment import Experiment
 
 
 def load(path):
@@ -41,8 +44,33 @@ def main():
     ap.add_argument("--bs", type=int, default=16)
     ap.add_argument("--lr", type=float, default=1e-3)
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
-    ap.add_argument("--no_pool", action="store_true", help="ablation: full-res CNN, no MaxPool")
+    ap.add_argument("--arch", choices=["unet", "transformer"], default="unet",
+                    help="model architecture")
+    ap.add_argument("--no_pool", action="store_true",
+                    help="ablation: full-res CNN, no MaxPool (unet only)")
+    ap.add_argument("--dim", type=int, default=128, help="transformer token dim")
+    ap.add_argument("--depth", type=int, default=4, help="transformer encoder layers")
+    ap.add_argument("--heads", type=int, default=4, help="transformer attention heads")
+    ap.add_argument("--dropout", type=float, default=0.0, help="transformer dropout")
     args = ap.parse_args()
+
+    config = ({} if args.arch == "unet" else
+              dict(dim=args.dim, depth=args.depth, heads=args.heads, dropout=args.dropout))
+    exp = Experiment("train_imitation", config={
+        "total_epochs": args.epochs,
+        "batch_size": args.bs,
+        "learning_rate": args.lr,
+        "data": args.data,
+        "arch": args.arch,
+        "no_pool": args.no_pool,
+        "config": config,
+        "device": args.device,
+    })
+    exp.snapshot(model_mod.__file__, "model.py")
+    exp.snapshot(features_mod.__file__, "features.py")
+    if args.arch == "transformer":
+        from src.priority import model_transformer as mt_mod
+        exp.snapshot(mt_mod.__file__, "model_transformer.py")
 
     feats, label, free = load(args.data)
     n = feats.shape[0]
@@ -53,7 +81,7 @@ def main():
 
     dev = args.device
     feats, label, free = feats.to(dev), label.to(dev), free.to(dev)
-    model = PriorityUNet(pool=not args.no_pool).to(dev)
+    model = build_model(args.arch, no_pool=args.no_pool, **config).to(dev)
     opt = torch.optim.Adam(model.parameters(), lr=args.lr)
 
     def loss_on(idx):
@@ -75,15 +103,27 @@ def main():
             loss.backward()
             opt.step()
             tot += loss.item() * len(b)
+        train_loss = tot / len(tr)
         model.eval()
         with torch.no_grad():
             vl = loss_on(val_idx).item()
+        exp.scalar("loss/train", train_loss, ep)
+        exp.scalar("loss/val", vl, ep)
         if vl < best:
             best = vl
-            torch.save({"model": model.state_dict(), "no_pool": args.no_pool}, args.out)
+            ckpt = {"model": model.state_dict(), "arch": args.arch,
+                    "no_pool": args.no_pool, "config": config}
+            torch.save(ckpt, exp.path("best.pt"))
+            torch.save(ckpt, args.out)
         if ep % 10 == 0 or ep == args.epochs - 1:
-            print(f"ep {ep:3d} train {tot/len(tr):.4f} val {vl:.4f} best {best:.4f}")
-    print(f"saved best (val {best:.4f}) -> {args.out}")
+            exp.log(f"ep {ep:3d} train {train_loss:.4f} val {vl:.4f} best {best:.4f}")
+    exp.save_yaml("config.yaml", {
+        "total_epochs": args.epochs, "batch_size": args.bs, "learning_rate": args.lr,
+        "data": args.data, "arch": args.arch, "no_pool": args.no_pool,
+        "config": config, "device": args.device, "best_val_loss": best,
+    })
+    exp.log(f"saved best (val {best:.4f}) -> {exp.path('best.pt')} and {args.out}")
+    exp.close()
 
 
 if __name__ == "__main__":

@@ -4,5 +4,14 @@ __pycache__/
 .ipynb_checkpoints/
 # regeneratable imitation dataset (use scripts/gen_dataset.py)
 data/
-# local docs (not tracked)
-docs/
+# experiment runs (checkpoints, logs, tensorboard)
+logs/
+# default scratch output of scripts/simulate.py (curated demos are tracked by name)
+runs/sim.gif
+# gifs of simulated episodes
+runs/gifs/
+# local-only paper-yield demo gifs (scripts/simulate.py, seeds 10-20)
+runs/gifs_paper/
+runs/gifs_transformer/
+
+docs/untracked/

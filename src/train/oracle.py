@@ -53,7 +53,10 @@ def score_field(gmap, samples, field, max_steps=400, alpha=0.3):
     """Mean (success_rate, flowtime) of `field` over fixed start/goal samples."""
     succ, flow = 0, 0.0
     for starts, goals in samples:
-        sim = Simulator(gmap, starts, goals, max_steps=max_steps, alpha=alpha)
+        # training-label search pinned to the legacy beta engine (matches how the
+        # shipped checkpoints were produced); eval/benchmark use paper-yield.
+        sim = Simulator(gmap, starts, goals, max_steps=max_steps, alpha=alpha,
+                        yield_mode="beta")
         res = sim.run(field)
         succ += res.success
         flow += res.flowtime

@@ -22,20 +22,35 @@ class PIBT:
         self.goal_dist = goal_dist
         self.n = len(goal_dist)
 
-    def _candidates(self, i, cur):
-        """Next-cell candidates for agent i, sorted by distance-to-goal (asc)."""
-        r, c = cur
-        cands = self.gmap.neighbors(cur) + [cur]
-        dist = self.goal_dist[i]
+    def _candidates(self, i, cur, cost=None):
+        """Next-cell candidates for agent i, sorted by a cost field (asc).
+
+        `cost` (H,W) overrides the default goal-distance heuristic; it is how a
+        *yielding* agent is routed toward its lowest-priority neighbor instead of
+        its goal (the paper's Alg. 3 line 12 subgoal reassignment).
+        """
+        cands = self.gmap.neighbors(cur)
+        if cost is None:
+            dist = self.goal_dist[i]
+            cands = cands + [cur]  # waiting in place is allowed
+        else:
+            # yielding: must step to a *neighbour* (paper Alg. 3 line 12 -> the
+            # lowest-priority adjacent node), so the current cell is excluded
+            # here; staying put remains available only via func_pibt's
+            # last-resort fallback if no neighbour is free.
+            dist = cost
         # small deterministic tie-break on coordinates keeps runs reproducible
         cands.sort(key=lambda u: (dist[u[0], u[1]], u[0], u[1]))
         return cands
 
-    def step(self, positions, priorities, rng=None):
+    def step(self, positions, priorities, rng=None, cost=None):
         """Advance one timestep.
 
         positions: list[(r,c)] current cell per agent.
         priorities: array[n] float; higher plans first (ties broken by index).
+        cost: optional list[n] of (H,W) fields; cost[i] (if not None) replaces
+            agent i's goal-distance heuristic this step (used to make a yielding
+            agent descend toward its lowest-priority adjacent node).
         Returns list[(r,c)] next cell per agent (conflict-free).
         """
         n = self.n
@@ -47,7 +62,8 @@ class PIBT:
         def func_pibt(i, caller=None):
             # caller.now is forbidden to avoid head-on swaps
             forbidden = cur[caller] if caller is not None else None
-            for u in self._candidates(i, cur[i]):
+            ci = cost[i] if cost is not None else None
+            for u in self._candidates(i, cur[i], ci):
                 if u in occupied_next:
                     continue
                 if u == forbidden:
