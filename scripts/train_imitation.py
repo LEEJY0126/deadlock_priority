@@ -68,6 +68,9 @@ def main():
     })
     exp.snapshot(model_mod.__file__, "model.py")
     exp.snapshot(features_mod.__file__, "features.py")
+    if args.arch == "transformer":
+        from src.priority import model_transformer as mt_mod
+        exp.snapshot(mt_mod.__file__, "model_transformer.py")
 
     feats, label, free = load(args.data)
     n = feats.shape[0]

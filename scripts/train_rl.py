@@ -106,6 +106,9 @@ def main():
                 p.requires_grad_(False)
     else:
         model = build_model(arch, no_pool=no_pool, **config).to(dev)
+    if arch == "transformer":  # snapshot the resolved arch (may come from --init)
+        from src.priority import model_transformer as mt_mod
+        exp.snapshot(mt_mod.__file__, "model_transformer.py")
     opt = torch.optim.Adam(model.parameters(), lr=args.lr)
     rng = np.random.default_rng(0)
 

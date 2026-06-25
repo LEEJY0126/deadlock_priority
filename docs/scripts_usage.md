@@ -267,7 +267,7 @@ Each run dir contains:
 | `config.yaml` | run hyperparameters (see below) |
 | `train.log` | human-readable progress (also echoed to stdout) |
 | `events.out.tfevents.*` | TensorBoard scalars |
-| `model.py`, `features.py` | snapshots of the model architecture + input feature definitions used for the run |
+| `model.py`, `features.py` | snapshots of the model architecture + input feature definitions used for the run (plus `model_transformer.py` when `--arch transformer`) |
 | `*.pt` | checkpoints — `best.pt` (imitation), `checkpoint.pt`/`final.pt` (RL). Also copied to `--out`. |
 | `reward_weight.yaml` | (RL only) snapshot of the reward weights used |
 
