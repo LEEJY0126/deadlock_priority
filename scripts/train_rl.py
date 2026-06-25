@@ -126,8 +126,12 @@ def main():
                 exp.scalar(f"eval_flowtime/{kind}", r["flowtime"], step)
         return report
 
+    def mean_success(report):
+        """Headline metric for best-checkpoint selection: mean success over kinds."""
+        return sum(r["success_rate"] for r in report.values()) / len(report)
+
     print_report("MST baseline", evaluate(baseline_provider, eval_inst))
-    bench("learned @ init", step=0)
+    init_report = bench("learned @ init", step=0)
 
     # Rollouts are pure-CPU NumPy and independent across (map, sample); a spawn
     # pool parallelizes them without touching the parent's CUDA context.
@@ -138,15 +142,21 @@ def main():
     if args.engine == "vec":
         exp.log("using GPU-vectorized rollout engine (approximate solver)")
 
-    def save(name):
+    def save(name, mirror=False):
         ckpt = {"model": model.state_dict(), "arch": arch,
                 "no_pool": no_pool, "config": config}
         torch.save(ckpt, exp.path(name))
-        torch.save(ckpt, args.out)
+        if mirror:               # only the best checkpoint is mirrored to --out
+            torch.save(ckpt, args.out)
 
     try:
         ema = None
         os.makedirs(os.path.dirname(args.out), exist_ok=True)
+        # best-by-success tracking: seed from the init eval so best.pt / --out are
+        # always populated, then overwrite whenever an eval improves mean success.
+        best_success = mean_success(init_report)
+        save("best.pt", mirror=True)
+        exp.log(f"init best success {best_success:.1f}% -> best.pt and {args.out}")
         for it in range(1, args.iters + 1):
             maps = sample_maps(args.batch_maps, args.size, rng)
             stats = rl_step(model, maps, opt, dev, K=args.K, sigma=args.sigma,
@@ -161,10 +171,17 @@ def main():
                 exp.log(f"it {it:4d}  loss {stats['loss']:+.3f}  "
                         f"reward {stats['reward']:+.3f}  ema {ema:+.3f}")
             if it % args.eval_every == 0:
-                bench(f"learned @ it{it}", step=it)
-                save("checkpoint.pt")
-        save("final.pt")
-        exp.log(f"saved -> {exp.path('final.pt')} and {args.out}")
+                report = bench(f"learned @ it{it}", step=it)
+                save("checkpoint.pt")  # latest state, for resume/inspection
+                ms = mean_success(report)
+                exp.scalar("eval_success/mean", ms, it)
+                if ms > best_success:
+                    best_success = ms
+                    save("best.pt", mirror=True)
+                    exp.log(f"  new best success {ms:.1f}% @ it{it} -> best.pt and {args.out}")
+        save("final.pt")  # end-of-training state (run dir only; --out holds best)
+        exp.log(f"saved final -> {exp.path('final.pt')}; "
+                f"best ({best_success:.1f}%) -> {exp.path('best.pt')} and {args.out}")
     finally:
         if pool is not None:
             pool.close()
