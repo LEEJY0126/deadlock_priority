@@ -92,17 +92,19 @@ Success rate, default `paper` resolution (right-hand rule + livelock):
 
 | map | MST baseline (paper) | imitation CNN | hybrid CNN | imitation Transformer | hybrid Transformer |
 |-----|:--------------------:|:-------------:|:----------:|:---------------------:|:------------------:|
-| forest | 70.0% | **78.2%** | 77.2% | 77.4% | 76.6% |
-| wide   | 70.2% | 71.4% | 73.8% | **74.4%** | 74.2% |
-| narrow | 42.8% | 46.4% | 46.8% | 46.4% | **47.8%** |
+| forest | 70.0% | 78.2% | **79.6%** | 77.4% | 76.4% |
+| wide   | 70.2% | 71.4% | 73.0% | **74.4%** | 72.4% |
+| narrow | 42.8% | 46.4% | 45.4% | 46.4% | **48.8%** |
 
 All four learned fields beat the paper's heuristic on all three map types
-(forest +6.6–8.2pp, wide +1.2–4.2pp, narrow +3.6–5.0pp at n=500/kind), and are
+(forest +6.4–9.6pp, wide +1.2–4.2pp, narrow +2.6–6.0pp at n=500/kind), and are
 also slightly more efficient (lower makespan/flowtime than MST throughout). The
-CNN U-Net leads on forest; the Transformer edges ahead on wide/narrow, within
-~1pp of the CNN everywhere. `runs/fields.png` shows the mechanism: the MST field
-is piecewise-constant in coarse blocks, while the learned field is a smooth
-fine-grained gradient that breaks symmetry more precisely at junctions.
+CNN U-Net leads on forest (hybrid 79.6%); the Transformer leads on narrow
+(48.8%) and wide (74.4%); the two stay within ~1–3pp. Hybrid checkpoints are the
+best-by-success iterate (`runs/rl.pt` mirrors `best.pt`). `runs/fields_rl.png`
+shows the mechanism: the MST field is piecewise-constant in coarse blocks, while
+the learned field is a smooth fine-grained gradient that breaks symmetry more
+precisely at junctions.
 
 ## Ablation: removing the pooling layer
 
@@ -138,9 +140,10 @@ Findings:
    (full-res deep layers are *more* expensive). A principled full-resolution
    alternative would be dilated convolutions, not deleting the downsampling.
 
-Checkpoints: `runs/imitation_nopool.pt`, `runs/rl_nopool.pt`. Reproduce with
-`--no_pool` on `train_imitation.py` (the arch then propagates through RL/eval/viz
-automatically via the checkpoint flag).
+The `--no_pool` checkpoints are not shipped in `runs/` (this ablation predates the
+current `paper`-mode regeneration). Reproduce with `--no_pool` on
+`train_imitation.py` — the arch then propagates through RL/eval/viz automatically
+via the checkpoint flag.
 
 ## Engineering notes
 

@@ -159,33 +159,38 @@ Success rate (higher is better), default **paper** deadlock resolution
 
 | map    | MST baseline (paper) | imitation CNN | hybrid CNN | imitation Transformer | hybrid Transformer |
 |--------|:--------------------:|:-------------:|:----------:|:---------------------:|:------------------:|
-| forest |        70.0%         |   **78.2%**   |   77.2%    |        77.4%          |       76.6%        |
-| wide   |        70.2%         |     71.4%     |   73.8%    |       **74.4%**       |       74.2%        |
-| narrow |        42.8%         |     46.4%     |   46.8%    |        46.4%          |     **47.8%**      |
+| forest |        70.0%         |     78.2%     | **79.6%**  |        77.4%          |       76.4%        |
+| wide   |        70.2%         |     71.4%     |   73.0%    |       **74.4%**       |       72.4%        |
+| narrow |        42.8%         |     46.4%     |   45.4%    |        46.4%          |     **48.8%**      |
+
+(Hybrid checkpoints are the **best-by-success** iterate — `runs/rl.pt` now mirrors
+`best.pt`, see [Experiment tracking](#experiment-tracking--reward-weights).)
 
 **All four learned fields beat the paper's MST heuristic on all three** map
-types — forest +6.6–8.2pp, wide +1.2–4.2pp, narrow +3.6–5.0pp — at n=500/kind, so
+types — forest +6.4–9.6pp, wide +1.2–4.2pp, narrow +2.6–6.0pp — at n=500/kind, so
 the lead is consistent rather than noise. The learned fields are also slightly
 more *efficient*: lower makespan and flowtime than MST across the board (e.g.
-narrow flowtime 144–147 vs 151, makespan ~30 vs 32).
+narrow flowtime ~144–146 vs 151, makespan ~30 vs 32).
 
 Reading the numbers:
 - **Architecture.** The CNN U-Net is strongest on **forest** (open, local features
-  suffice); the **Transformer** edges ahead on **wide** and **narrow**, where
-  global corridor context helps — the two architectures are within ~1pp
-  everywhere, so attention is competitive but not decisive at this map size.
-- **Imitation vs RL.** Differences are small (≤2pp): RL fine-tuning mainly helps
-  **wide** (CNN 71.4→73.8) and **narrow** (Transformer 46.4→47.8), and is roughly
-  flat on forest.
+  suffice; hybrid CNN 79.6% is the best single cell); the **Transformer** is
+  strongest on **narrow** (48.8%) and **wide** (74.4%), where global corridor
+  context helps. The two architectures stay within ~1–3pp, so attention is
+  competitive but not decisive at this map size.
+- **Imitation vs RL.** Differences are small (≤2–3pp). RL fine-tuning helps
+  **forest** (CNN 78.2→79.6) and **narrow** (Transformer 46.4→48.8); elsewhere it
+  roughly matches or slightly trails imitation (e.g. hybrid Transformer wide
+  72.4 vs 74.4).
 - **Baseline context.** The faithful **right-hand-rule** deadlock branch lifts the
   *MST* narrow baseline to 42.8% (vs ~30% under livelock-only back-out), so the
   learned field's gain now sits on top of an already-stronger baseline.
 
-`runs/fields.png` (from `scripts/visualize.py`) shows *why* the learned field
-helps: the MST field is piecewise-constant in coarse blocks (the 4-cycle rule
-collapses whole open regions to one level), whereas the learned field is a smooth
-fine-grained gradient — finer symmetry-breaking at junctions instead of coarse
-steps.
+`runs/fields_rl.png` (from `scripts/visualize.py`; `runs/fields_rl_transformer.png`
+for the attention model) shows *why* the learned field helps: the MST field is
+piecewise-constant in coarse blocks (the 4-cycle rule collapses whole open regions
+to one level), whereas the learned field is a smooth fine-grained gradient — finer
+symmetry-breaking at junctions instead of coarse steps.
 
 Reproduce: `python scripts/evaluate.py --ckpt runs/rl.pt --n_per_kind 100 --n_inst 5`
 (swap `--ckpt runs/rl_transformer.pt` for the attention model).
@@ -193,14 +198,14 @@ Reproduce: `python scripts/evaluate.py --ckpt runs/rl.pt --n_per_kind 100 --n_in
 ### Watch the difference
 
 `scripts/simulate.py` runs the *same* instance under both fields. In this
-narrow-maze case (`--seed 20`) the MST priority **deadlocks** (7/8 agents home)
-while the learned field **solves it in 25 steps** (8/8). The top row shows the
+narrow-maze case (`--seed 10`) the MST priority **deadlocks** (7/8 agents home)
+while the learned field **solves it in 18 steps** (8/8). The top row shows the
 raw priority maps (MST integer levels vs the learned smooth field); the bottom
 row animates the agents:
 
-![MST vs learned priority on a narrow maze](runs/sim_narrow_seed20_raw.gif)
+![MST vs learned priority on a narrow maze](runs/sim_narrow_seed10_raw.gif)
 
-Reproduce: `python scripts/simulate.py --ckpt runs/rl.pt --map narrow --seed 20 --max_steps 60 --raw`
+Reproduce: `python scripts/simulate.py --ckpt runs/rl.pt --map narrow --seed 10 --max_steps 60 --raw`
 
 ## Limitations / next steps
 
