@@ -12,3 +12,6 @@ runs/sim.gif
 runs/gifs/
 # local-only paper-yield demo gifs (scripts/simulate.py, seeds 10-20)
 runs/gifs_paper/
+runs/gifs_transformer/
+
+docs/untracked/
