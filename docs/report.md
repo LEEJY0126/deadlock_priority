@@ -31,18 +31,23 @@ the full continuous stack.
   `src/priority/mst_baseline.py` as the **baseline to beat**.
 - **PIBT** as the MAPF solver that consumes priorities, plus the paper's
   "agents at goal yield" and anti-oscillation tie-break ideas (Eq. 13).
+- **Deadlock / livelock resolution (Alg. 3).** Both branches are ported to the
+  grid in the default `"paper"` yield mode: the **right-hand rule** for deadlock
+  (Eq. 14 detection → Eq. 15 sidestep) and the **lowest-priority-neighbour
+  back-out** for livelock (Eq. 18). The limited-sensing conflict (Eq. 19) has
+  nothing to fire on under the simulator's full observability, so it is omitted.
 
 ## What is different
 
 | Aspect | Paper | This project |
 |--------|-------|--------------|
-| **Priority source** | Hand-designed MST priority tree | **Learned CNN field** (hybrid imitation → RL) |
+| **Priority source** | Hand-designed MST priority tree | **Learned field** (CNN U-Net or Transformer; hybrid imitation → RL) |
 | **State space** | Continuous 3D, double-integrator dynamics | **Discrete grid**, agents hop cell-to-cell |
 | **Inter-agent collision avoidance** | ABVC + Safe Flight Corridor + QP trajectory optimization (with Theorems 1–2) | **Not modeled** — only PIBT's grid vertex/swap conflict rules |
 | **Asynchronous updates** | Core contribution; ABVC guarantees safety under async replanning | **Not modeled** — synchronous, centralized PIBT step |
 | **Communication-free** | Achieved via position priority + ABVC | Priority is comms-free by construction (map-only input); the rest of the async/sensing machinery is absent |
 | **Limited sensing range** | Explicit constraint (Eq. 11) | **Not modeled** — full observability in the simulator |
-| **Deadlock / livelock handling** | Right-hand rule + livelock detection + limited-sensing conflict resolution (Alg. 3) | Replaced by the **learned field** + a generic PIBT anti-starvation boost |
+| **Deadlock / livelock handling** | Right-hand rule + livelock detection + limited-sensing conflict resolution (Alg. 3) | Right-hand rule (Eq. 14→15) + livelock back-out (Eq. 18) **ported to the grid** in `"paper"` mode; limited-sensing (Eq. 19) N/A under full observability. Legacy `"beta"` anti-starvation boost also available |
 | **Validation** | Simulation + 8-quadrotor hardware | Grid simulation only |
 
 ## Design choices that depart from the paper (and why)
@@ -50,12 +55,16 @@ the full continuous stack.
 These are abstraction decisions made so that *priority quality* is the only
 variable under study:
 
-1. **Anti-starvation boost (`beta`).** A purely static field cannot resolve a
-   1-wide corridor (agents must back out — PIBT's reachability needs a
-   starvation-breaking term). We add a small boost ∝ stuck-time, applied
-   **identically** to the MST baseline and the learned field, so the field
-   remains the only difference. Fields are scale-normalized first so `beta`
-   affects the integer MST field and the softplus learned field equally.
+1. **Two yield modes (`paper` vs `beta`).** A purely static field cannot resolve
+   a 1-wide corridor (agents must move aside — PIBT's reachability needs a
+   tie-breaking term). The default `"paper"` mode ports Alg. 3 faithfully
+   (right-hand rule for deadlock, lowest-priority back-out for livelock). A legacy
+   `"beta"` mode instead adds an anti-starvation boost ∝ stuck-time that *raises*
+   a stuck agent's priority so it pushes through; it is more forgiving and is used
+   for **training**, while evaluation/visualization use `"paper"`. Either mode is
+   applied **identically** to the MST baseline and the learned field, so the field
+   remains the only difference. Fields are scale-normalized first so the mechanism
+   treats the integer MST field and the softplus learned field equally.
 2. **Braided mazes.** A perfect (tree) maze is near-unsolvable for 8 agents (no
    passing places), which would mask any priority differences. We braid mazes to
    add alcoves/loops → hard-but-solvable.
@@ -69,26 +78,31 @@ variable under study:
 
 ## Why the comparison is still fair and meaningful
 
-- Both methods run through the **same** simulator, PIBT solver, anti-starvation
-  boost, maze distribution, and held-out instances. Only the priority field
-  differs.
+- Both methods run through the **same** simulator, PIBT solver, deadlock/livelock
+  resolution (the same `yield_mode`), maze distribution, and held-out instances.
+  Only the priority field differs.
 - Priority does not affect collision safety in the paper either (safety comes
   from ABVC/SFC/stop-constraint, Theorems 1–2). So studying priority in isolation
   does not discard a safety property — a worse field can only cause deadlock or
   inefficiency, never a collision.
 
-## Result (held-out, 8 agents, 21×21, 60 instances/kind)
+## Result (held-out, 8 agents, 21×21, 500 instances/kind, `paper` mode)
 
-| map | MST baseline (paper) | imitation | hybrid (imitation→RL) |
-|-----|:--------------------:|:---------:|:---------------------:|
-| forest | 90.0% | 88.3% | **91.7%** |
-| wide   | 81.7% | 86.7% | **90.0%** |
-| narrow | 30.0% | 45.0% | **46.7%** |
+Success rate, default `paper` resolution (right-hand rule + livelock):
 
-The learned field beats the paper's heuristic on all three map types, with the
-largest gains where deadlocks dominate. `runs/fields.png` shows the mechanism:
-the MST field is piecewise-constant in coarse blocks, while the learned field is
-a smooth fine-grained gradient that breaks symmetry more precisely at junctions.
+| map | MST baseline (paper) | imitation CNN | hybrid CNN | imitation Transformer | hybrid Transformer |
+|-----|:--------------------:|:-------------:|:----------:|:---------------------:|:------------------:|
+| forest | 70.0% | **78.2%** | 77.2% | 77.4% | 76.6% |
+| wide   | 70.2% | 71.4% | 73.8% | **74.4%** | 74.2% |
+| narrow | 42.8% | 46.4% | 46.8% | 46.4% | **47.8%** |
+
+All four learned fields beat the paper's heuristic on all three map types
+(forest +6.6–8.2pp, wide +1.2–4.2pp, narrow +3.6–5.0pp at n=500/kind), and are
+also slightly more efficient (lower makespan/flowtime than MST throughout). The
+CNN U-Net leads on forest; the Transformer edges ahead on wide/narrow, within
+~1pp of the CNN everywhere. `runs/fields.png` shows the mechanism: the MST field
+is piecewise-constant in coarse blocks, while the learned field is a smooth
+fine-grained gradient that breaks symmetry more precisely at junctions.
 
 ## Ablation: removing the pooling layer
 
@@ -97,7 +111,12 @@ retrained an identical model with `pool=False` (`--no_pool`): a full-resolution
 flat CNN, no `MaxPool2d`. Same dataset, same training schedule; only the
 architecture differs.
 
-Success rate (held-out, 8 agents, 21×21, 60 instances/kind):
+> **Note.** The ablation table below is the earlier measurement (legacy `beta`
+> mode, 60 instances/kind); it has not been rerun under the current `paper`-mode
+> right-hand-rule resolution. The qualitative conclusion (pooling matters, removing
+> it hurts narrow-corridor reasoning and destabilizes RL) is what to take from it.
+
+Success rate (held-out, 8 agents, 21×21, 60 instances/kind, legacy `beta` mode):
 
 | map | MST baseline | pooled imitation | no-pool imitation | pooled RL | no-pool RL |
 |-----|:------------:|:----------------:|:-----------------:|:---------:|:----------:|

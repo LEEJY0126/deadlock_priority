@@ -32,19 +32,23 @@ reimplementing the continuous ABVC + SFC + QP stack.
 
 ```
 map (occupancy) ──► priority field ──► PIBT per-step ──► episode ──► metrics
-                     (MST or CNN)        (+ dynamic boost)            success/makespan/flowtime
+                  (MST / CNN / Transformer)  (+ yield)             success/makespan/flowtime
 ```
 
 - `src/envs/grid.py`     — occupancy grid, BFS distances, random-forest & braided-maze generators
 - `src/envs/pibt.py`     — PIBT (Priority Inheritance with Backtracking)
 - `src/envs/simulator.py`— episode runner; assembles agent priority from the field
-  (Eq. 13) and resolves deadlocks with the paper's explicit yield (Alg. 3 lines
-  11-12: a stuck lower-priority agent backs out to its lowest-priority neighbour).
-  A legacy `yield_mode="beta"` push-through boost is also available. Either way the
-  mechanism is applied identically to every method, so the **field is the only
-  variable**.
+  (Eq. 13) and resolves deadlocks with the paper's two-branch scheme (Alg. 3): a
+  **deadlock** (frozen agent blocked head-on, Eq. 14) triggers the **right-hand
+  rule** (Eq. 15 — sidestep perpendicular and away from the blocker); a
+  **livelock** (stuck lower-priority agent, Eq. 18) backs out to its
+  lowest-priority neighbour (Alg. 3 lines 11-12). A legacy `yield_mode="beta"`
+  push-through boost is also available. Either way the mechanism is applied
+  identically to every method, so the **field is the only variable**.
 - `src/priority/mst_baseline.py` — the paper's MST position-priority field (the baseline to beat)
 - `src/priority/model.py`        — `PriorityUNet`: CNN mapping map features → per-cell field
+- `src/priority/model_transformer.py` — `PriorityTransformer`: CNN stem + self-attention
+  alternative (`--arch transformer`); same map-features → per-cell field contract
 - `src/priority/features.py`     — map-only input channels (no live positions ⇒ comms-free)
 - `src/train/oracle.py`          — candidate-bank search producing imitation labels
 - `src/train/rl.py`              — group-baseline REINFORCE (GRPO-style) over whole-field actions
@@ -63,8 +67,9 @@ python scripts/smoke_test.py
 # 1. generate imitation labels (oracle search per map)
 python scripts/gen_dataset.py --out data/imitation.npz --n_maps 150
 
-# 2. imitation pretraining
+# 2. imitation pretraining (default U-Net; --arch transformer for the attention model)
 python scripts/train_imitation.py --data data/imitation.npz --out runs/imitation.pt
+#    the architecture is recorded in the checkpoint and inherited through RL/eval/viz
 
 # 3. RL fine-tuning (hybrid: warm-start from imitation, anchor to prevent forgetting)
 python scripts/train_rl.py --init runs/imitation.pt --out runs/rl.pt --iters 200
@@ -95,7 +100,7 @@ Each `train_imitation` / `train_rl` run writes a self-contained directory
 | `train.log` | progress (also echoed to stdout) |
 | `events.out.tfevents.*` | TensorBoard scalars (`tensorboard --logdir logs`) |
 | `model.py`, `features.py` | snapshots of the model architecture + input features used for the run |
-| `*.pt` | checkpoints (`best.pt` / `final.pt`; also copied to `--out`) |
+| `*.pt` | checkpoints — `best.pt` (best-selected, mirrored to `--out`), plus RL's `checkpoint.pt`/`final.pt` (run dir only) |
 | `reward_weight.yaml` | (RL) snapshot of the reward weights used |
 
 RL reward shaping is configured in the tracked **`reward_weight.yaml`** at the
@@ -117,18 +122,29 @@ to favor speed. The defaults reproduce the results below.
   leaves no room for two agents to pass in a 1-wide corridor, making it
   near-unsolvable rather than hard; braiding adds alcoves/loops.
 - **Deadlock resolution (`yield_mode`).** A perfectly static field cannot resolve
-  a 1-wide corridor — agents must back out. The default `"paper"` mode implements
-  the paper's explicit yield (Alg. 3 lines 11-12, Fig. 6): a stuck lower-priority
-  agent that is blocked by a higher-priority neighbour has its subgoal reassigned
-  to the **lowest-priority adjacent node**, so it retreats to make room. (The
-  paper's *limited-sensing* conflict, Eq. 19, has nothing to fire on here — this
-  grid is fully observable — so only the livelock branch, Eq. 18, is ported.) A
-  legacy `"beta"` mode instead *raises* a stuck agent's priority so it pushes
-  through; it resolves more deadlocks in this centralized PIBT grid but is less
-  faithful to the paper. Training is pinned to `"beta"` (the shipped checkpoints
-  were produced that way); benchmark + visualization use `"paper"`. Fields are
-  scale-normalized first so either mechanism treats the integer MST field and the
-  learned softplus field equally.
+  a 1-wide corridor — agents must move aside. The default `"paper"` mode ports
+  **both** branches of the paper's Alg. 3:
+  - **Deadlock → right-hand rule (Alg. 3 lines 6-9, Eq. 14→15).** Detected
+    *before* the MAPF step: an agent that is frozen (zero grid velocity, Eq. 14a)
+    with a neighbour occupying the cell directly ahead toward its goal (Eq. 14b)
+    is routed by the **right-hand rule** — it sidesteps perpendicular to, and away
+    from, the blocker (Eq. 15). Priority-independent, so a head-on pair both fire
+    and pass on consistent opposite sides. Toggle with `deadlock_resolution`.
+  - **Livelock → lowest-priority neighbour (Alg. 3 lines 11-13, Eq. 18).** The
+    fallback after MAPF: a stuck *lower*-priority agent blocked by a
+    higher-priority neighbour has its subgoal reassigned to the **lowest-priority
+    adjacent node**, so it retreats to make room. (The *limited-sensing* conflict,
+    Eq. 19, has nothing to fire on under full observability, so only the Eq. 18
+    livelock condition is ported.)
+
+  Deadlock takes precedence (Alg. 3 returns at line 8 before line 11). A legacy
+  `"beta"` mode instead *raises* a stuck agent's priority so it pushes through;
+  it resolves more deadlocks in this centralized PIBT grid but is less faithful to
+  the paper. Training is pinned to `"beta"` (it is the more forgiving signal for
+  RL); benchmark + visualization use `"paper"`. Fields are scale-normalized first
+  so either mechanism treats the integer MST field and the learned softplus field
+  equally. Grid adaptations of the continuous Eq. 14/15 thresholds (`vth`, `dth`,
+  `dr`) are documented in the `simulator.py` module docstring.
 - **Imitation target.** The optimal position-priority field is intractable, so
   the oracle scores a bank of candidate fields (MST rooted at different cells +
   geometry baselines) by simulation and keeps the best — a cheap proxy label.
@@ -136,48 +152,43 @@ to favor speed. The defaults reproduce the results below.
   episode reward directly. An L2 anchor to the imitation logits curbs
   catastrophic forgetting.
 
-## Results (held-out, 8 agents, 21×21, 60 instances/kind)
+## Results (held-out, 8 agents, 21×21, 500 instances/kind = 100 maps × 5)
 
-Success rate (higher is better), default **paper-yield** deadlock resolution
-(bold = best per row):
+Success rate (higher is better), default **paper** deadlock resolution
+(right-hand rule + livelock; bold = best per row):
 
-| map    | MST baseline (paper) | imitation CNN | hybrid (imitation→RL) |
-|--------|:--------------------:|:-------------:|:---------------------:|
-| forest |        65.0%         |   **75.0%**   |         71.7%         |
-| wide   |        68.3%         |     75.0%     |       **78.3%**       |
-| narrow |        30.0%         |   **40.0%**   |         33.3%         |
+| map    | MST baseline (paper) | imitation CNN | hybrid CNN | imitation Transformer | hybrid Transformer |
+|--------|:--------------------:|:-------------:|:----------:|:---------------------:|:------------------:|
+| forest |        70.0%         |   **78.2%**   |   77.2%    |        77.4%          |       76.6%        |
+| wide   |        70.2%         |     71.4%     |   73.8%    |       **74.4%**       |       74.2%        |
+| narrow |        42.8%         |     46.4%     |   46.8%    |        46.4%          |     **47.8%**      |
 
-Both learned fields **beat the paper's MST heuristic on all three** map types —
-the core conclusion "a learned field ≥ the MST heuristic" is robust to the
-resolution mechanism, not an artifact of the boost. Which learned field wins
-varies by map: imitation is strongest on forest (+10.0pp vs MST) and narrow
-(+10.0pp), while RL fine-tuning helps most on wide (hybrid +10.0pp vs MST). RL
-does not uniformly improve on imitation here — with this stochastic run it traded
-a little forest/narrow success for a wide gain. Absolute rates are lower than
-under the legacy push-through boost (below): the paper's *back-out* yield resolves
-fewer deadlocks than *pushing through* in this centralized, fully observable PIBT
-grid. (Numbers are from freshly retrained checkpoints; training is pinned to
-`beta`, so these are transfer numbers and will vary run-to-run.)
+**All four learned fields beat the paper's MST heuristic on all three** map
+types — forest +6.6–8.2pp, wide +1.2–4.2pp, narrow +3.6–5.0pp — at n=500/kind, so
+the lead is consistent rather than noise. The learned fields are also slightly
+more *efficient*: lower makespan and flowtime than MST across the board (e.g.
+narrow flowtime 144–147 vs 151, makespan ~30 vs 32).
 
-<details><summary>Legacy <code>beta</code> push-through numbers (same checkpoints)</summary>
+Reading the numbers:
+- **Architecture.** The CNN U-Net is strongest on **forest** (open, local features
+  suffice); the **Transformer** edges ahead on **wide** and **narrow**, where
+  global corridor context helps — the two architectures are within ~1pp
+  everywhere, so attention is competitive but not decisive at this map size.
+- **Imitation vs RL.** Differences are small (≤2pp): RL fine-tuning mainly helps
+  **wide** (CNN 71.4→73.8) and **narrow** (Transformer 46.4→47.8), and is roughly
+  flat on forest.
+- **Baseline context.** The faithful **right-hand-rule** deadlock branch lifts the
+  *MST* narrow baseline to 42.8% (vs ~30% under livelock-only back-out), so the
+  learned field's gain now sits on top of an already-stronger baseline.
 
-| map    | MST  | imitation | hybrid |
-|--------|:----:|:---------:|:------:|
-| forest | 90.0% | **91.7%** | 85.0% |
-| wide   | 81.7% | 86.7% | **91.7%** |
-| narrow | 30.0% | 40.0% | **45.0%** |
+`runs/fields.png` (from `scripts/visualize.py`) shows *why* the learned field
+helps: the MST field is piecewise-constant in coarse blocks (the 4-cycle rule
+collapses whole open regions to one level), whereas the learned field is a smooth
+fine-grained gradient — finer symmetry-breaking at junctions instead of coarse
+steps.
 
-Reproduce with `yield_mode="beta"`. Higher absolute success because a stuck
-agent is boosted to push through rather than retreating. (Here RL regresses on
-forest but wins wide/narrow — again the imitation/RL lead trades by map.)
-</details>
-
-`runs/fields.png` (from `scripts/visualize.py`) shows *why*: the MST field is
-piecewise-constant in coarse blocks (the 4-cycle rule collapses whole open
-regions to one level), whereas the learned field is a smooth fine-grained
-gradient — finer symmetry-breaking at junctions instead of coarse steps.
-
-Reproduce: `python scripts/evaluate.py --ckpt runs/rl.pt --n_per_kind 12 --n_inst 5`
+Reproduce: `python scripts/evaluate.py --ckpt runs/rl.pt --n_per_kind 100 --n_inst 5`
+(swap `--ckpt runs/rl_transformer.pt` for the attention model).
 
 ### Watch the difference
 

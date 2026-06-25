@@ -87,7 +87,7 @@ catastrophic forgetting. Periodically benchmarks against the MST baseline.
 | Argument | Type | Default | Description |
 |----------|------|---------|-------------|
 | `--init` | str | `None` | Imitation checkpoint to warm-start from (also used as the anchor) |
-| `--out` | str | `runs/rl.pt` | Checkpoint output path |
+| `--out` | str | `runs/rl.pt` | Output path; mirrors `best.pt` (best mean held-out success) |
 | `--iters` | int | `300` | Optimization iterations |
 | `--batch_maps` | int | `4` | Maps per iteration (balanced across kinds) |
 | `--K` | int | `8` | Field samples drawn per map (group size) |
@@ -268,7 +268,7 @@ Each run dir contains:
 | `train.log` | human-readable progress (also echoed to stdout) |
 | `events.out.tfevents.*` | TensorBoard scalars |
 | `model.py`, `features.py` | snapshots of the model architecture + input feature definitions used for the run (plus `model_transformer.py` when `--arch transformer`) |
-| `*.pt` | checkpoints — `best.pt` (imitation), `checkpoint.pt`/`final.pt` (RL). Also copied to `--out`. |
+| `*.pt` | checkpoints — `best.pt` (both), plus `checkpoint.pt`/`final.pt` (RL). `best.pt` is mirrored to `--out`. |
 | `reward_weight.yaml` | (RL only) snapshot of the reward weights used |
 
 **`config.yaml` fields**
@@ -281,8 +281,9 @@ empty for the U-Net, which uses the `no_pool` flag instead).
 
 **TensorBoard scalars**
 - `train_imitation`: `loss/train`, `loss/val`.
-- `train_rl`: `reward/step`, `reward/ema`, `loss`, and per map kind
-  `eval_success/{kind}`, `eval_makespan/{kind}`, `eval_flowtime/{kind}`.
+- `train_rl`: `reward/step`, `reward/ema`, `loss`, `eval_success/mean` (the
+  best-selection metric), and per map kind `eval_success/{kind}`,
+  `eval_makespan/{kind}`, `eval_flowtime/{kind}`.
 
 View with: `tensorboard --logdir logs`
 
@@ -294,29 +295,31 @@ differ only in *when* and *why* each is written:
 
 | file | written by | when | how it's selected | use it as |
 |------|-----------|------|-------------------|-----------|
-| `best.pt` | `train_imitation` | every epoch the **validation loss improves** | lowest val loss so far (early-stopping pick) | the imitation model to keep |
+| `best.pt` | both | imitation: every epoch **val loss improves**; RL: every eval **mean success improves** | best-so-far (early-stopping pick) | **the model to keep** (mirrored to `--out`) |
 | `checkpoint.pt` | `train_rl` | every `--eval_every` iters, right after a benchmark | none — the **latest** state at that eval | resuming / inspecting a run that is still running or was interrupted |
-| `final.pt` | `train_rl` | once, after the **last** iteration | none — the **end-of-training** state | the RL model to keep |
+| `final.pt` | `train_rl` | once, after the **last** iteration | none — the **end-of-training** state | comparing the end state vs the best iterate |
 
 Key points:
 
-- **`--out` mirrors the "keep" checkpoint.** Every save also writes to `--out`
-  (e.g. `runs/rl.pt`). Imitation copies `best.pt`; RL copies both, but `final.pt`
-  is written last, so `runs/rl.pt` ends up identical to `final.pt`.
-- **Imitation is best-selected; RL is not.** `best.pt` is chosen by validation
-  loss. RL does **no** best-tracking — neither `checkpoint.pt` nor `final.pt` is
-  picked by eval success; they are simply "latest at the last eval" and "latest
-  at the end." To keep the best-by-success RL iterate instead, watch the per-iter
-  `eval_success/{kind}` scalars in TensorBoard and grab the matching
-  `checkpoint.pt` (or re-score candidates with `evaluate.py`).
+- **`--out` mirrors `best.pt`.** Both scripts copy their best-selected checkpoint
+  to `--out` (e.g. `runs/rl.pt`), so `--out` is always the *kept* model.
+  `checkpoint.pt` and `final.pt` are written to the **run dir only** — they are
+  *not* mirrored to `--out`.
+- **Both scripts are best-selected.** Imitation picks `best.pt` by **validation
+  loss**; RL picks `best.pt` by **mean held-out success** across map kinds
+  (`eval_success/mean`), seeded from the `@ init` eval so `best.pt`/`--out` are
+  populated from the start and overwritten whenever an eval improves.
+- **RL eval is small, so `best.pt` is a noisy pick.** The in-loop benchmark uses
+  `n_per_kind=8 × n_inst=3` per kind — cheap but noisy, so a lucky iterate can win.
+  For a robust choice, re-score the top `checkpoint.pt`/`best.pt` candidates with
+  `evaluate.py` at a larger `--n_per_kind`.
 - **`checkpoint.pt` vs `final.pt`.** On a clean run they differ only by the
-  iterations between the last eval and the final step (`≤ --eval_every`; they are
-  effectively identical when `--iters` is a multiple of `--eval_every`).
-  `final.pt` is written **only on normal completion** — if a run crashes or is
-  interrupted, `final.pt` may be absent and `checkpoint.pt` (from the last eval)
-  is your most recent recoverable state.
-- Imitation writes **no** `checkpoint.pt` / `final.pt`; RL writes **no**
-  `best.pt`.
+  iterations between the last eval and the final step (`≤ --eval_every`; identical
+  when `--iters` is a multiple of `--eval_every`). `final.pt` is written **only on
+  normal completion** — if a run crashes, `final.pt` may be absent and
+  `checkpoint.pt` (from the last eval) is your most recent recoverable state,
+  while `best.pt`/`--out` still hold the best iterate up to that point.
+- Imitation writes **no** `checkpoint.pt` / `final.pt`; both now write `best.pt`.
 
 ## Reward weights (`reward_weight.yaml`)
 
