@@ -31,6 +31,9 @@ def main():
     ap.add_argument("--n_agents", type=int, default=8)
     ap.add_argument("--n_samples", type=int, default=4)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--oracle", choices=["beta", "paper"], default="beta",
+                    help="PIBT deadlock-resolution mode the oracle uses to score "
+                         "candidate fields (beta=legacy boost, paper=right-hand rule)")
     args = ap.parse_args()
 
     rng = np.random.default_rng(args.seed)
@@ -41,7 +44,8 @@ def main():
         kind = kinds[m % len(kinds)]
         gmap = make_map(kind, args.size, rng)
         fld, info = best_field(gmap, n_agents=args.n_agents,
-                               n_samples=args.n_samples, seed=int(rng.integers(1 << 30)))
+                               n_samples=args.n_samples, seed=int(rng.integers(1 << 30)),
+                               yield_mode=args.oracle)
         occs.append(gmap.occ)
         labels.append(fld)
         kinds_log.append(kind)

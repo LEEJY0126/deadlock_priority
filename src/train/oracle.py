@@ -49,14 +49,15 @@ def candidate_fields(gmap: GridMap, rng=None):
     return fields
 
 
-def score_field(gmap, samples, field, max_steps=400, alpha=0.3):
-    """Mean (success_rate, flowtime) of `field` over fixed start/goal samples."""
+def score_field(gmap, samples, field, max_steps=400, alpha=0.3, yield_mode="beta"):
+    """Mean (success_rate, flowtime) of `field` over fixed start/goal samples.
+
+    ``yield_mode`` is the PIBT deadlock-resolution behavior used to score
+    candidates (default ``"beta"`` matches how the shipped labels were made)."""
     succ, flow = 0, 0.0
     for starts, goals in samples:
-        # training-label search pinned to the legacy beta engine (matches how the
-        # shipped checkpoints were produced); eval/benchmark use paper-yield.
         sim = Simulator(gmap, starts, goals, max_steps=max_steps, alpha=alpha,
-                        yield_mode="beta")
+                        yield_mode=yield_mode)
         res = sim.run(field)
         succ += res.success
         flow += res.flowtime
@@ -64,8 +65,11 @@ def score_field(gmap, samples, field, max_steps=400, alpha=0.3):
     return succ / n, flow / n
 
 
-def best_field(gmap: GridMap, n_agents=8, n_samples=4, seed=0, max_steps=400):
-    """Return (best_field, info) for one map by searching the candidate bank."""
+def best_field(gmap: GridMap, n_agents=8, n_samples=4, seed=0, max_steps=400,
+               yield_mode="beta"):
+    """Return (best_field, info) for one map by searching the candidate bank.
+
+    ``yield_mode`` is the PIBT mode used to score candidates (``"beta"``/``"paper"``)."""
     rng = np.random.default_rng(seed)
     samples = []
     for _ in range(n_samples):
@@ -75,7 +79,8 @@ def best_field(gmap: GridMap, n_agents=8, n_samples=4, seed=0, max_steps=400):
     best = None
     results = []
     for name, fld in candidate_fields(gmap, rng=rng):
-        sr, ft = score_field(gmap, samples, fld, max_steps=max_steps)
+        sr, ft = score_field(gmap, samples, fld, max_steps=max_steps,
+                              yield_mode=yield_mode)
         results.append((name, sr, ft))
         key = (sr, -ft)  # maximise success, then minimise flowtime
         if best is None or key > best[0]:

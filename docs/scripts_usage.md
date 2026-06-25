@@ -33,6 +33,7 @@ the best map-level priority field and caches `(occupancy, label field)`.
 | `--n_agents` | int | `8` | Agents per evaluation instance |
 | `--n_samples` | int | `4` | Start/goal instances used to score each candidate field |
 | `--seed` | int | `0` | RNG seed |
+| `--oracle` | str | `beta` | PIBT deadlock-resolution mode the oracle scores under: `beta` (legacy boost) or `paper` (right-hand rule + livelock) |
 
 ```bash
 python scripts/gen_dataset.py --out data/imitation.npz --n_maps 150
@@ -99,6 +100,7 @@ catastrophic forgetting. Periodically benchmarks against the MST baseline.
 | `--eval_every` | int | `25` | Benchmark + checkpoint cadence (iterations) |
 | `--workers` | int | `0` | Parallel rollout workers (0/1 = serial; ~3× faster at 8; cpu engine only) |
 | `--engine` | str | `cpu` | Rollout engine: `cpu` (exact PIBT) or `vec` (GPU-batched approx; `GPU_vectorized` branch) |
+| `--oracle` | str | `beta` | PIBT deadlock-resolution mode for RL reward rollouts: `beta` (legacy boost) or `paper` (right-hand rule + livelock). cpu engine only — `vec` uses its own approximate solver |
 | `--reward_weights` | str | `reward_weight.yaml` | YAML of reward shaping weights (snapshotted into the run dir) |
 | `--arch` | str | `unet` | Architecture for a **cold start** (no `--init`): `unet` or `transformer`. Ignored when `--init` is given — the arch is inherited from the checkpoint. |
 | `--no_pool` | flag | off | `unet` cold-start ablation; inherited from `--init` when set |
@@ -134,6 +136,7 @@ instances (per-kind success rate, makespan, flowtime).
 | `--n_per_kind` | int | `10` | Eval maps per kind (use ≥12 — small evals are noisy) |
 | `--n_inst` | int | `4` | Start/goal instances per map |
 | `--n_agents` | int | `8` | Agents per instance |
+| `--oracle` | str | `paper` | PIBT deadlock-resolution mode for eval rollouts: `paper` (right-hand rule + livelock) or `beta` (legacy boost) |
 | `--device` | str | `cuda`/`cpu` | Compute device |
 
 ```bash
@@ -207,6 +210,7 @@ trails, goals as matching-color stars. Saves a GIF (or shows a live window).
 | `--trail` | int | `8` | Trail length in steps (0 = off) |
 | `--raw` | flag | off | Add a top row of raw-priority-map subplots (values annotated per cell) |
 | `--live` | flag | off | Show a window instead of saving |
+| `--oracle` | str | `paper` | PIBT deadlock-resolution mode for the animated episodes: `paper` (right-hand rule + livelock) or `beta` (legacy boost) |
 | `--device` | str | `cuda`/`cpu` | Compute device |
 
 The simulation background is the per-map **z-scored** field (best contrast for

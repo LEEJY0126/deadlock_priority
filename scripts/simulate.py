@@ -55,8 +55,9 @@ def draw_raw_map(ax, field, occ, fontsize):
     ax.set_xticks([]); ax.set_yticks([])
 
 
-def run(g, starts, goals, field, max_steps):
-    sim = Simulator(g, starts, goals, max_steps=max_steps, log_positions=True)
+def run(g, starts, goals, field, max_steps, yield_mode="paper"):
+    sim = Simulator(g, starts, goals, max_steps=max_steps, log_positions=True,
+                    yield_mode=yield_mode)
     res = sim.run(field)
     return res
 
@@ -75,6 +76,9 @@ def main():
     ap.add_argument("--raw", action="store_true",
                     help="show raw priority values + colorbar (default: per-map z-score)")
     ap.add_argument("--live", action="store_true", help="show a window instead of saving")
+    ap.add_argument("--oracle", choices=["beta", "paper"], default="paper",
+                    help="PIBT deadlock-resolution mode for the simulated episodes "
+                         "(paper=right-hand rule + livelock, beta=legacy boost)")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     args = ap.parse_args()
 
@@ -95,7 +99,7 @@ def main():
         print(f"[warn] {args.ckpt} not found -- showing MST only")
 
     # run the episode under each field
-    results = [(name, fld, run(g, starts, goals, fld, args.max_steps))
+    results = [(name, fld, run(g, starts, goals, fld, args.max_steps, args.oracle))
                for name, fld in panels]
     T = max(len(r.positions_log) for _, _, r in results)
 

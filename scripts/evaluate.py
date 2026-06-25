@@ -14,18 +14,22 @@ def main():
     ap.add_argument("--n_per_kind", type=int, default=10)
     ap.add_argument("--n_inst", type=int, default=4)
     ap.add_argument("--n_agents", type=int, default=8)
+    ap.add_argument("--oracle", choices=["beta", "paper"], default="paper",
+                    help="PIBT deadlock-resolution mode for the eval rollouts "
+                         "(paper=right-hand rule + livelock, beta=legacy boost)")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     args = ap.parse_args()
 
     maps = make_eval_maps(n_per_kind=args.n_per_kind)
     inst = make_instances(maps, n_agents=args.n_agents, n_inst=args.n_inst)
 
-    print_report("MST baseline", evaluate(baseline_provider, inst))
+    print_report("MST baseline", evaluate(baseline_provider, inst, yield_mode=args.oracle))
 
     if args.ckpt:
         model = load_model(args.ckpt, device=args.device)
         provider = lambda g: predict_field(model, g, device=args.device)
-        print_report(f"Learned ({os.path.basename(args.ckpt)})", evaluate(provider, inst))
+        print_report(f"Learned ({os.path.basename(args.ckpt)})",
+                     evaluate(provider, inst, yield_mode=args.oracle))
 
 
 if __name__ == "__main__":

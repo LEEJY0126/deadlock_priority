@@ -60,6 +60,10 @@ def main():
                     help="parallel rollout workers (0/1 = serial; cpu engine only)")
     ap.add_argument("--engine", choices=["cpu", "vec"], default="cpu",
                     help="reward rollouts: cpu=exact PIBT, vec=GPU-batched approx")
+    ap.add_argument("--oracle", choices=["beta", "paper"], default="beta",
+                    help="PIBT deadlock-resolution mode for the RL reward rollouts "
+                         "(beta=legacy boost, paper=right-hand rule + livelock; "
+                         "cpu engine only -- vec uses its own approximate solver)")
     ap.add_argument("--reward_weights", default="reward_weight.yaml",
                     help="YAML of reward shaping weights")
     args = ap.parse_args()
@@ -74,6 +78,7 @@ def main():
         "K": args.K,
         "anchor_w": args.anchor_w,
         "engine": args.engine,
+        "oracle": args.oracle,
         "init": args.init,
         "arch": args.arch,
         "reward_weights": weights.to_dict(),
@@ -162,7 +167,7 @@ def main():
             stats = rl_step(model, maps, opt, dev, K=args.K, sigma=args.sigma,
                             n_agents=args.n_agents, rng=rng,
                             anchor=anchor, anchor_w=args.anchor_w, pool=pool,
-                            engine=args.engine, weights=weights)
+                            engine=args.engine, weights=weights, yield_mode=args.oracle)
             ema = stats["reward"] if ema is None else 0.95 * ema + 0.05 * stats["reward"]
             exp.scalar("reward/step", stats["reward"], it)
             exp.scalar("reward/ema", ema, it)
