@@ -73,7 +73,7 @@ python scripts/gen_dataset.py --out data/imitation.npz --n_maps 150 --oracle pap
 #    transformer); omit --arch for the default U-Net. The architecture is recorded
 #    in the checkpoint and inherited automatically through RL / eval / viz.
 python scripts/train_imitation.py --data data/imitation.npz \
-    --arch transformer --dim 32 --depth 3 --dropout 0.1 --out runs/imitation_transformer.pt
+    --arch transformer --dim 96 --depth 3 --dropout 0.1 --out runs/imitation_transformer.pt
 
 # 3. RL fine-tuning (hybrid: warm-start from imitation, anchor to prevent forgetting;
 #    the arch is inherited from --init. --oracle paper trains under the same
@@ -160,33 +160,40 @@ to favor speed. The defaults reproduce the results below.
 
 ## Results (held-out, 8 agents, 21×21, 500 instances/kind = 100 maps × 5)
 
-Default **paper** deadlock resolution (right-hand rule + livelock), with the
-corrected arrived-agent yield (finished agents get `-inf` priority so they always
-make way — see the note below). The headline model is the **Transformer** field
+Default **paper** deadlock resolution (right-hand rule + livelock), with two
+correctness fixes to the resolution layer (arrived-agent yield + oscillation
+livelock — see the note below). The headline model is the **Transformer** field
 trained **fully in-distribution** — paper-mode oracle labels → paper-mode RL →
-paper-mode eval (`runs/rl_transformer.pt`, `dim=32`, best-by-success). `succ` =
+paper-mode eval (`runs/rl_transformer.pt`, `dim=96`, best-by-success). `succ` =
 success rate (higher better), `mksp` = makespan, `flow` = flowtime (lower better):
 
 | map | MST baseline — succ / mksp / flow | Learned (Transformer, imit→RL) — succ / mksp / flow |
 |-----|:---------------------------------:|:---------------------------------------------------:|
-| forest | 92.6% / 27.0 / 127.9 | **94.0%** / 26.2 / 126.5 |
-| wide   | 90.2% / 27.0 / 127.9 | **94.0%** / 25.7 / 125.2 |
-| narrow | 60.6% / 32.4 / 151.6 | **63.2%** / 30.3 / 145.0 |
+| forest | 93.2% / 27.1 / 128.1 | **94.8%** / 26.2 / 126.4 |
+| wide   | 91.0% / 27.5 / 129.2 | **94.2%** / 26.0 / 125.7 |
+| narrow | 60.6% / 33.7 / 154.6 | **61.0%** / 30.7 / 146.4 |
 
 The learned field wins on **every metric on every map**, but by a **modest
-margin** — +1.4–3.8pp success, with lower makespan and flowtime everywhere. The
-honest takeaway: once the simulator resolves deadlocks correctly, the paper's
-hand-designed **MST baseline is already strong** (60–93%), and the learned field
-is a small, *consistent* improvement on top of it — not a dramatic one.
+margin** — +0.4–3.2pp success (and noticeably lower makespan/flowtime everywhere,
+e.g. narrow flowtime 146.4 vs 154.6). The honest takeaway: once the simulator
+resolves deadlocks correctly, the paper's hand-designed **MST baseline is already
+strong** (61–93%), and the learned field is a small, *consistent* improvement on
+top of it — not a dramatic one. On `narrow` the success gap is now nearly closed
+(+0.4pp), though the learned field still finishes faster.
 
-> **Why the baseline is this strong (a fixed bug).** Agents that reach their goal
-> get **`-inf`** priority so they always yield (paper Eq. 13a). An earlier version
-> priced them at `0`; because the field is z-scored per map, an en-route agent in
-> a low-priority region could have a *negative* priority and so be unable to push a
-> *finished* agent off a cell on its path — a permanent deadlock. That bug
-> depressed all success rates and inflated the apparent learned-vs-MST gap (the
-> learned field's smooth gradient happened to dodge it). With it fixed, both jump
-> (MST narrow 42.8%→60.6%) and the true gap is small.
+> **Why the baseline is this strong (two fixed bugs in the resolution layer).**
+> (1) Agents at their goal now get **`-inf`** priority so they always yield (paper
+> Eq. 13a); they were priced at `0`, and because the field is z-scored per map an
+> en-route agent in a low-priority region could go *negative* and fail to push a
+> *finished* agent off a cell on its path — a permanent deadlock. (2) The livelock
+> detector now catches **priority-oscillation** swaps directly (an agent returning
+> to the cell it held two steps ago) and yields by *base* priority, which the
+> anti-oscillation tie-break otherwise hid. Both bugs depressed all success rates
+> and inflated the apparent learned-vs-MST gap (the learned field's smooth gradient
+> happened to dodge them). With them fixed, both jump (MST narrow 42.8%→60.6%) and
+> the true gap is small. A residual class remains — a goal parked in a 1-wide
+> corridor on another agent's only path — which no *local* yield rule resolves
+> under the MST field, but the learned field does (see seed 54 below).
 
 `runs/fields_rl_transformer.png` (from `scripts/visualize.py`) shows *where* the
 learned field still helps: the MST field is piecewise-constant in coarse blocks
@@ -200,7 +207,7 @@ Reproduce: `python scripts/evaluate.py --ckpt runs/rl_transformer.pt --n_per_kin
 
 `scripts/simulate.py` runs the *same* instance under both fields. In this
 narrow-maze case (`--seed 54`) the MST priority **deadlocks** (7/8 agents home)
-while the learned Transformer field **solves it in 25 steps** (8/8). The top row
+while the learned Transformer field **solves it in 28 steps** (8/8). The top row
 shows the raw priority maps (MST integer levels vs the learned smooth field); the
 bottom row animates the agents:
 

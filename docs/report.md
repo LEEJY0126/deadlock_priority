@@ -88,32 +88,37 @@ variable under study:
 
 ## Result (held-out, 8 agents, 21×21, 500 instances/kind, `paper` mode)
 
-Default `paper` resolution (right-hand rule + livelock), with the corrected
-arrived-agent yield (finished agents get `-inf` priority — see note). Headline:
-the learned **Transformer** field trained **fully in-distribution** (paper-mode
-oracle labels → paper-mode RL → paper-mode eval; `runs/rl_transformer.pt`,
-`dim=32`, best-by-success) vs the MST baseline — `succ` (↑) / `mksp` (↓) /
-`flow` (↓):
+Default `paper` resolution (right-hand rule + livelock), with two correctness
+fixes to the resolution layer (see note). Headline: the learned **Transformer**
+field trained **fully in-distribution** (paper-mode oracle labels → paper-mode RL
+→ paper-mode eval; `runs/rl_transformer.pt`, `dim=96`, best-by-success) vs the MST
+baseline — `succ` (↑) / `mksp` (↓) / `flow` (↓):
 
 | map | MST — succ / mksp / flow | Learned (Transformer, imit→RL) — succ / mksp / flow |
 |-----|:------------------------:|:---------------------------------------------------:|
-| forest | 92.6% / 27.0 / 127.9 | **94.0%** / 26.2 / 126.5 |
-| wide   | 90.2% / 27.0 / 127.9 | **94.0%** / 25.7 / 125.2 |
-| narrow | 60.6% / 32.4 / 151.6 | **63.2%** / 30.3 / 145.0 |
+| forest | 93.2% / 27.1 / 128.1 | **94.8%** / 26.2 / 126.4 |
+| wide   | 91.0% / 27.5 / 129.2 | **94.2%** / 26.0 / 125.7 |
+| narrow | 60.6% / 33.7 / 154.6 | **61.0%** / 30.7 / 146.4 |
 
 The learned field wins on every metric on every map, but by a **modest margin**
-(+1.4–3.8pp success; lower makespan/flowtime everywhere). Honest takeaway: once
+(+0.4–3.2pp success; lower makespan/flowtime everywhere). Honest takeaway: once
 deadlocks are resolved correctly, the paper's hand-designed **MST baseline is
-already strong** (60–93%) and the learned field is a small *consistent*
-improvement, not a dramatic one.
+already strong** (61–93%) and the learned field is a small *consistent*
+improvement — on `narrow` the success gap is nearly closed (+0.4pp), though the
+learned field still finishes faster (flowtime 146.4 vs 154.6).
 
-> **Corrected baseline (a fixed bug).** Agents at their goal now get `-inf`
-> priority so they always yield (paper Eq. 13a). They were previously priced at
-> `0`; with the per-map z-scored field, an en-route agent in a low-priority region
-> could go *negative* and fail to displace a *finished* agent parked on its path —
-> a permanent deadlock that depressed every success rate and inflated the apparent
-> learned-vs-MST gap. Fixing it raises both (MST narrow 42.8%→60.6%); the true gap
-> is small.
+> **Corrected baseline (two fixed bugs).** (1) Agents at their goal now get
+> `-inf` priority so they always yield (Eq. 13a); priced at `0`, with the per-map
+> z-scored field an en-route agent in a low-priority region could go *negative*
+> and fail to displace a *finished* agent parked on its path. (2) The livelock
+> detector now catches priority-**oscillation** swaps directly and yields by
+> *base* priority (the anti-oscillation tie-break otherwise hid who should yield).
+> Both depressed every success rate and inflated the apparent learned-vs-MST gap;
+> fixing them raises both (MST narrow 42.8%→60.6%) so the true gap is small. A
+> residual class — a goal parked in a 1-wide corridor on another agent's only path
+> — is unsolvable by any *local* yield under the MST field but is handled by the
+> learned field (it is not a deviation from the paper, whose Eq. 14/18 conditions
+> also do not fire there; the paper guarantees collision- not deadlock-freeness).
 
 `runs/fields_rl_transformer.png` shows *where* the learned field still helps: the
 MST field is piecewise-constant in coarse blocks, while the learned field is a
