@@ -73,7 +73,7 @@ python scripts/gen_dataset.py --out data/imitation.npz --n_maps 150 --oracle pap
 #    transformer); omit --arch for the default U-Net. The architecture is recorded
 #    in the checkpoint and inherited automatically through RL / eval / viz.
 python scripts/train_imitation.py --data data/imitation.npz \
-    --arch transformer --out runs/imitation_transformer.pt
+    --arch transformer --dim 32 --depth 3 --dropout 0.1 --out runs/imitation_transformer.pt
 
 # 3. RL fine-tuning (hybrid: warm-start from imitation, anchor to prevent forgetting;
 #    the arch is inherited from --init. --oracle paper trains under the same
@@ -92,7 +92,7 @@ python scripts/train_rl.py --init runs/imitation_transformer.pt --out runs/rl_tr
 python scripts/evaluate.py --ckpt runs/rl_transformer.pt --oracle paper
 
 # 5. watch it: animated MST-vs-learned episode on the same instance
-python scripts/simulate.py --ckpt runs/rl_transformer.pt --map narrow --seed 76 --max_steps 60
+python scripts/simulate.py --ckpt runs/rl_transformer.pt --map narrow --seed 54 --max_steps 60
 ```
 
 ## Experiment tracking & reward weights
@@ -160,59 +160,53 @@ to favor speed. The defaults reproduce the results below.
 
 ## Results (held-out, 8 agents, 21×21, 500 instances/kind = 100 maps × 5)
 
-Default **paper** deadlock resolution (right-hand rule + livelock). The headline
-model is the **Transformer** field trained **fully in-distribution** — paper-mode
-oracle labels → paper-mode RL → paper-mode eval (`runs/rl_transformer.pt`,
-best-by-success). `succ` = success rate (higher better), `mksp` = makespan,
-`flow` = flowtime (lower better):
+Default **paper** deadlock resolution (right-hand rule + livelock), with the
+corrected arrived-agent yield (finished agents get `-inf` priority so they always
+make way — see the note below). The headline model is the **Transformer** field
+trained **fully in-distribution** — paper-mode oracle labels → paper-mode RL →
+paper-mode eval (`runs/rl_transformer.pt`, `dim=32`, best-by-success). `succ` =
+success rate (higher better), `mksp` = makespan, `flow` = flowtime (lower better):
 
 | map | MST baseline — succ / mksp / flow | Learned (Transformer, imit→RL) — succ / mksp / flow |
 |-----|:---------------------------------:|:---------------------------------------------------:|
-| forest | 70.0% / 26.5 / 127.8 | **79.4%** / 26.3 / 127.2 |
-| wide   | 70.2% / 27.0 / 128.0 | **76.0%** / 25.9 / 125.6 |
-| narrow | 42.8% / 32.3 / 151.4 | **51.8%** / 30.1 / 144.6 |
+| forest | 92.6% / 27.0 / 127.9 | **94.0%** / 26.2 / 126.5 |
+| wide   | 90.2% / 27.0 / 127.9 | **94.0%** / 25.7 / 125.2 |
+| narrow | 60.6% / 32.4 / 151.6 | **63.2%** / 30.3 / 145.0 |
 
-The learned field wins on **all three metrics across all three maps**: +5.8–9.0pp
-success, plus lower makespan and flowtime everywhere (e.g. narrow 51.8% vs 42.8%,
-flowtime 144.6 vs 151.4). The faithful **right-hand-rule** deadlock branch already
-lifts the *MST* narrow baseline to 42.8% (vs ~30% under livelock-only back-out),
-so the learned field's gain sits on top of an already-stronger baseline.
+The learned field wins on **every metric on every map**, but by a **modest
+margin** — +1.4–3.8pp success, with lower makespan and flowtime everywhere. The
+honest takeaway: once the simulator resolves deadlocks correctly, the paper's
+hand-designed **MST baseline is already strong** (60–93%), and the learned field
+is a small, *consistent* improvement on top of it — not a dramatic one.
 
-**Training in the evaluation dynamics helps** (success rate, `paper` eval). The
-in-distribution model above is trained under `paper`; an earlier model trained
-under `beta` (the legacy boost) and only *transferred* to `paper` eval is weaker
-on the deadlock-heavy narrow maps:
+> **Why the baseline is this strong (a fixed bug).** Agents that reach their goal
+> get **`-inf`** priority so they always yield (paper Eq. 13a). An earlier version
+> priced them at `0`; because the field is z-scored per map, an en-route agent in
+> a low-priority region could have a *negative* priority and so be unable to push a
+> *finished* agent off a cell on its path — a permanent deadlock. That bug
+> depressed all success rates and inflated the apparent learned-vs-MST gap (the
+> learned field's smooth gradient happened to dodge it). With it fixed, both jump
+> (MST narrow 42.8%→60.6%) and the true gap is small.
 
-| map | MST | beta-trained (transfer) | paper-trained (in-distribution) |
-|-----|:---:|:-----------------------:|:-------------------------------:|
-| forest | 70.0% | 79.0% | **79.4%** |
-| wide   | 70.2% | **76.0%** | **76.0%** |
-| narrow | 42.8% | 48.4% | **51.8%** |
-
-Matching train/eval dynamics adds **+3.4pp on narrow** (48.4→51.8) where the
-right-hand rule matters most. *Caveat:* the two checkpoints also differ in size
-(beta-trained `dim=128`, paper-trained `dim=64`), so this is indicative rather
-than a controlled ablation — but the smaller in-distribution model still wins.
-
-`runs/fields_rl_transformer.png` (from `scripts/visualize.py`) shows *why* the
-learned field helps: the MST field is piecewise-constant in coarse blocks (the
-4-cycle rule collapses whole open regions to one level), whereas the learned field
-is a smooth fine-grained gradient — finer symmetry-breaking at junctions instead
-of coarse steps.
+`runs/fields_rl_transformer.png` (from `scripts/visualize.py`) shows *where* the
+learned field still helps: the MST field is piecewise-constant in coarse blocks
+(the 4-cycle rule collapses whole open regions to one level), whereas the learned
+field is a smooth fine-grained gradient — finer symmetry-breaking at junctions,
+which is what buys the remaining few points (especially on `wide`/`narrow`).
 
 Reproduce: `python scripts/evaluate.py --ckpt runs/rl_transformer.pt --n_per_kind 100 --n_inst 5`
 
 ### Watch the difference
 
 `scripts/simulate.py` runs the *same* instance under both fields. In this
-narrow-maze case (`--seed 76`) the MST priority **deadlocks** (7/8 agents home)
-while the learned Transformer field **solves it in 26 steps** (8/8). The top row
+narrow-maze case (`--seed 54`) the MST priority **deadlocks** (7/8 agents home)
+while the learned Transformer field **solves it in 25 steps** (8/8). The top row
 shows the raw priority maps (MST integer levels vs the learned smooth field); the
 bottom row animates the agents:
 
-![MST vs learned priority on a narrow maze](runs/sim_narrow_seed76_raw.gif)
+![MST vs learned priority on a narrow maze](runs/sim_narrow_seed54_raw.gif)
 
-Reproduce: `python scripts/simulate.py --ckpt runs/rl_transformer.pt --map narrow --seed 76 --max_steps 60 --raw`
+Reproduce: `python scripts/simulate.py --ckpt runs/rl_transformer.pt --map narrow --seed 54 --max_steps 60 --raw`
 
 ## Limitations / next steps
 

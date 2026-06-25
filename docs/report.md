@@ -88,27 +88,36 @@ variable under study:
 
 ## Result (held-out, 8 agents, 21×21, 500 instances/kind, `paper` mode)
 
-Default `paper` resolution (right-hand rule + livelock). Headline: the learned
-**Transformer** field trained **fully in-distribution** (paper-mode oracle labels
-→ paper-mode RL → paper-mode eval; `runs/rl_transformer.pt`, best-by-success) vs
-the MST baseline — `succ` (↑) / `mksp` (↓) / `flow` (↓):
+Default `paper` resolution (right-hand rule + livelock), with the corrected
+arrived-agent yield (finished agents get `-inf` priority — see note). Headline:
+the learned **Transformer** field trained **fully in-distribution** (paper-mode
+oracle labels → paper-mode RL → paper-mode eval; `runs/rl_transformer.pt`,
+`dim=32`, best-by-success) vs the MST baseline — `succ` (↑) / `mksp` (↓) /
+`flow` (↓):
 
 | map | MST — succ / mksp / flow | Learned (Transformer, imit→RL) — succ / mksp / flow |
 |-----|:------------------------:|:---------------------------------------------------:|
-| forest | 70.0% / 26.5 / 127.8 | **79.4%** / 26.3 / 127.2 |
-| wide   | 70.2% / 27.0 / 128.0 | **76.0%** / 25.9 / 125.6 |
-| narrow | 42.8% / 32.3 / 151.4 | **51.8%** / 30.1 / 144.6 |
+| forest | 92.6% / 27.0 / 127.9 | **94.0%** / 26.2 / 126.5 |
+| wide   | 90.2% / 27.0 / 127.9 | **94.0%** / 25.7 / 125.2 |
+| narrow | 60.6% / 32.4 / 151.6 | **63.2%** / 30.3 / 145.0 |
 
-The learned field wins on all three metrics across all three maps (+5.8–9.0pp
-success; lower makespan and flowtime everywhere). **Training in the eval dynamics
-helps** — an earlier model trained under `beta` and only transferred to `paper`
-eval reaches 79.0 / 76.0 / **48.4**, so matching train/eval adds **+3.4pp on
-narrow** (the deadlock-heavy maps where the right-hand rule matters). *Caveat:* the
-two checkpoints differ in size too (beta `dim=128`, paper `dim=64`), so this is
-indicative, not a controlled ablation — but the smaller in-distribution model
-still wins. `runs/fields_rl_transformer.png` shows the mechanism: the MST field is
-piecewise-constant in coarse blocks, while the learned field is a smooth
-fine-grained gradient that breaks symmetry more precisely at junctions.
+The learned field wins on every metric on every map, but by a **modest margin**
+(+1.4–3.8pp success; lower makespan/flowtime everywhere). Honest takeaway: once
+deadlocks are resolved correctly, the paper's hand-designed **MST baseline is
+already strong** (60–93%) and the learned field is a small *consistent*
+improvement, not a dramatic one.
+
+> **Corrected baseline (a fixed bug).** Agents at their goal now get `-inf`
+> priority so they always yield (paper Eq. 13a). They were previously priced at
+> `0`; with the per-map z-scored field, an en-route agent in a low-priority region
+> could go *negative* and fail to displace a *finished* agent parked on its path —
+> a permanent deadlock that depressed every success rate and inflated the apparent
+> learned-vs-MST gap. Fixing it raises both (MST narrow 42.8%→60.6%); the true gap
+> is small.
+
+`runs/fields_rl_transformer.png` shows *where* the learned field still helps: the
+MST field is piecewise-constant in coarse blocks, while the learned field is a
+smooth fine-grained gradient that breaks symmetry more precisely at junctions.
 
 ## Ablation: removing the pooling layer
 
