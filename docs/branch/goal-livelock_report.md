@@ -66,7 +66,7 @@ the `subgoal` route added to `pibt.step`.
 | `629f18c` | **option B**: descent = non-increasing-priority **BFS** that crosses plateaus to a real `clearance ≥ 2` cell | the temp goal is now actually open (seed 20: `(7,8)`→`(7,9)`); bigger net gain |
 | `57993dc` | **keep priority while retreating** + **exit only after reaching temp goal** + Manhattan 2 | tracing seed 20 showed the agent was `-inf` on its goal cell and got shoved back; and the exit released *before* it even reached the open cell |
 | `b9b738a` | exit hold radius **Manhattan 3** | the blocker, pushed up its own column, hadn't cleared the chokepoint at radius ≤ 2; radius 3 waits long enough → **seed 20 solved** |
-| `441f5e6` | detect on priority **>= goal** (was strictly >) | also retreat when pushed onto an equal-priority open region; MST on 94/89/61 → 96/90/64 |
+| `d604a42` | detect on priority **>= goal** (was strictly >) | also retreat when pushed onto an equal-priority open region; MST on 94/89/61 → 96/90/64 |
 
 The decisive insight (raised in review): with retreat-keeping priority, the
 agent at `(7,7)` [raw 4] **out-ranks** the blocker at `(7,8)` [raw 3], so it
