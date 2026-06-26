@@ -267,10 +267,11 @@ class Simulator:
             return
 
         # enter: was on its goal last step, pushed exactly one cell off, and the
-        # current node outranks the goal node (it was displaced *upward*).
+        # current node priority is >= the goal node's (displaced upward or onto an
+        # equal-priority open region -- not pushed to a lower-priority node).
         if (last_pos[i] == goal
                 and abs(pos[i][0] - goal[0]) + abs(pos[i][1] - goal[1]) == 1
-                and self.field[pos[i][0], pos[i][1]] > self.field[goal[0], goal[1]]):
+                and self.field[pos[i][0], pos[i][1]] >= self.field[goal[0], goal[1]]):
             tg = self._retreat_node(pos[i])
             retreating[i] = True
             temp_goal[i] = tg

@@ -32,8 +32,9 @@ Stateful per-agent **retreat**, evaluated every step (precedence **deadlock →
 goal-livelock → livelock**):
 
 **Detection (enter retreat).** Agent `i` was on its goal last step, is pushed
-*exactly one cell* off, and `priority(current) > priority(goal)` (it was displaced
-*upward* in priority).
+*exactly one cell* off, and `priority(current) >= priority(goal)` (displaced
+*upward* in priority, or onto an equal-priority open region — not pushed to a
+lower-priority node).
 
 **Temp goal.** The nearest **open** cell (`clearance ≥ 2`) reachable by a
 **non-increasing-priority BFS** from the agent — i.e. descend the field, crossing
@@ -65,6 +66,7 @@ the `subgoal` route added to `pibt.step`.
 | `629f18c` | **option B**: descent = non-increasing-priority **BFS** that crosses plateaus to a real `clearance ≥ 2` cell | the temp goal is now actually open (seed 20: `(7,8)`→`(7,9)`); bigger net gain |
 | `57993dc` | **keep priority while retreating** + **exit only after reaching temp goal** + Manhattan 2 | tracing seed 20 showed the agent was `-inf` on its goal cell and got shoved back; and the exit released *before* it even reached the open cell |
 | `b9b738a` | exit hold radius **Manhattan 3** | the blocker, pushed up its own column, hadn't cleared the chokepoint at radius ≤ 2; radius 3 waits long enough → **seed 20 solved** |
+| `441f5e6` | detect on priority **>= goal** (was strictly >) | also retreat when pushed onto an equal-priority open region; MST on 94/89/61 → 96/90/64 |
 
 The decisive insight (raised in review): with retreat-keeping priority, the
 agent at `(7,7)` [raw 4] **out-ranks** the blocker at `(7,8)` [raw 3], so it
@@ -79,9 +81,9 @@ livelock **off → on** (final, Manhattan 3):
 
 | map | MST off → on | Learned off → on |
 |-----|:------------:|:----------------:|
-| forest | 92 → **94** | 94 → **97** |
-| wide   | 87 → **89** | 85 → **92** |
-| narrow | 57 → **61** | 65 → **69** |
+| forest | 92 → **96** | 94 → **97** |
+| wide   | 87 → **90** | 85 → **92** |
+| narrow | 57 → **64** | 65 → **69** |
 
 No regression; a clear gain on wide/narrow. Diagnostic seeds (MST, `paper`,
 goal-livelock on):

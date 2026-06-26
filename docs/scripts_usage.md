@@ -163,8 +163,8 @@ An opt-in extra resolution branch (paper mode only), isolated from the existing
 livelock logic; precedence is **deadlock → goal-livelock → livelock**. It targets
 an agent that keeps getting bounced off *its own goal* by through-traffic (the
 goal sits on another agent's path). When detected — the agent was on its goal
-last step, is pushed exactly one cell off, and its current node out-ranks the goal
-node — it enters a stateful **retreat**: it heads for the nearest *open* cell
+last step, is pushed exactly one cell off, and its current node priority is **≥**
+the goal node's — it enters a stateful **retreat**: it heads for the nearest *open* cell
 (clearance ≥ 2, descending the priority field and crossing equal-priority
 plateaus to get there) and, **once it has reached that temp goal**, holds there
 while any agent that moved on the previous step is within **Manhattan 3** of it;
