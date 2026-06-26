@@ -36,7 +36,7 @@ the best map-level priority field and caches `(occupancy, label field)`.
 | `--n_agents`  | int  | `8`                  | Agents per evaluation instance                                                                                       |
 | `--n_samples` | int  | `4`                  | Start/goal instances used to score each candidate field                                                              |
 | `--seed`      | int  | `0`                  | RNG seed                                                                                                             |
-| `--oracle`    | str  | `beta`               | PIBT deadlock-resolution mode the oracle scores under: `beta` (legacy boost) or `paper` (right-hand rule + livelock) |
+| `--oracle`    | str  | `beta`               | PIBT resolution mode the oracle scores candidates under: `beta` (legacy boost), `paper` (right-hand rule + livelock), or `goal-livelock` (paper + goal-livelock retreat) |
 
 
 ```bash
@@ -109,7 +109,7 @@ catastrophic forgetting. Periodically benchmarks against the MST baseline.
 | `--eval_every`                                | int   | `25`                 | Benchmark + checkpoint cadence (iterations)                                                                                                                                  |
 | `--workers`                                   | int   | `0`                  | Parallel rollout workers (0/1 = serial; ~3× faster at 8; cpu engine only)                                                                                                    |
 | `--engine`                                    | str   | `cpu`                | Rollout engine: `cpu` (exact PIBT) or `vec` (GPU-batched approx; `GPU_vectorized` branch)                                                                                    |
-| `--oracle`                                    | str   | `beta`               | PIBT deadlock-resolution mode for RL reward rollouts: `beta` (legacy boost) or `paper` (right-hand rule + livelock). cpu engine only — `vec` uses its own approximate solver |
+| `--oracle`                                    | str   | `beta`               | PIBT resolution mode for RL reward rollouts: `beta`, `paper` (right-hand rule + livelock), or `goal-livelock` (paper + goal-livelock retreat). Also drives best.pt selection. cpu engine only — `vec` uses its own approximate solver |
 | `--reward_weights`                            | str   | `reward_weight.yaml` | YAML of reward shaping weights (snapshotted into the run dir)                                                                                                                |
 | `--arch`                                      | str   | `unet`               | Architecture for a **cold start** (no `--init`): `unet` or `transformer`. Ignored when `--init` is given — the arch is inherited from the checkpoint.                        |
 | `--no_pool`                                   | flag  | off                  | `unet` cold-start ablation; inherited from `--init` when set                                                                                                                 |
@@ -147,20 +147,20 @@ instances (per-kind success rate, makespan, flowtime).
 | `--n_per_kind` | int  | `10`         | Eval maps per kind (use ≥12 — small evals are noisy)                                                           |
 | `--n_inst`     | int  | `4`          | Start/goal instances per map                                                                                   |
 | `--n_agents`   | int  | `8`          | Agents per instance                                                                                            |
-| `--oracle`     | str  | `paper`      | PIBT deadlock-resolution mode for eval rollouts: `paper` (right-hand rule + livelock) or `beta` (legacy boost) |
-| `--goal_livelock` | flag | off       | Enable the opt-in goal-livelock retreat (paper mode; see the Goal-livelock section)                                            |
+| `--oracle`     | str  | `paper`      | PIBT resolution mode for eval rollouts: `paper` (right-hand rule + livelock), `beta` (legacy boost), or `goal-livelock` (paper + goal-livelock retreat; see section) |
 | `--device`     | str  | `cuda`/`cpu` | Compute device                                                                                                 |
 
 
 ```bash
 python scripts/evaluate.py --ckpt runs/rl.pt --n_per_kind 12 --n_inst 5
-python scripts/evaluate.py --ckpt runs/rl.pt --n_per_kind 100 --n_inst 5 --goal_livelock
+python scripts/evaluate.py --ckpt runs/rl.pt --n_per_kind 100 --n_inst 5 --oracle goal-livelock
 ```
 
-### Goal-livelock (`--goal_livelock`)
+### The `goal-livelock` oracle (`--oracle goal-livelock`)
 
-An opt-in extra resolution branch (paper mode only), isolated from the existing
-livelock logic; precedence is **deadlock → goal-livelock → livelock**. It targets
+Selecting `--oracle goal-livelock` runs `paper` mode **plus** an opt-in extra
+resolution branch, isolated from the existing livelock logic; precedence is
+**deadlock → goal-livelock → livelock**. It targets
 an agent that keeps getting bounced off *its own goal* by through-traffic (the
 goal sits on another agent's path). When detected — the agent was on its goal
 last step, is pushed exactly one cell off, and its current node priority is **≥**
@@ -172,9 +172,9 @@ once clear it returns to its real goal. While retreating it keeps its en-route
 priority even on its own goal cell (otherwise the arrived-`-inf` rule would shove
 it back before it can cross out). Implemented in `src/envs/simulator.py`
 (`_goal_livelock_step` / `_retreat_node`) and routed via PIBT's `subgoal` path
-(staying allowed). Off by default; a net win in benchmarks, though it can't fix a
-structurally infeasible 1-wide corridor where there is no reachable open cell off
-the through-path.
+(staying allowed). Opt-in (other oracles leave it off); a net win in benchmarks,
+though it can't fix a structurally infeasible 1-wide corridor where there is no
+reachable open cell off the through-path. See `docs/branch/goal-livelock_report.md`.
 
 ### Metrics: success / makespan / flowtime
 
@@ -250,8 +250,7 @@ trails, goals as matching-color stars. Saves a GIF (or shows a live window).
 | `--trail`     | int  | `8`            | Trail length in steps (0 = off)                                                                                        |
 | `--raw`       | flag | off            | Add a top row of raw-priority-map subplots (values annotated per cell)                                                 |
 | `--live`      | flag | off            | Show a window instead of saving                                                                                        |
-| `--oracle`    | str  | `paper`        | PIBT deadlock-resolution mode for the animated episodes: `paper` (right-hand rule + livelock) or `beta` (legacy boost) |
-| `--goal_livelock` | flag | off        | Enable the opt-in goal-livelock retreat (paper mode; see the Goal-livelock section)                                                   |
+| `--oracle`    | str  | `paper`        | PIBT resolution mode for the animated episodes: `paper` (right-hand rule + livelock), `beta` (legacy boost), or `goal-livelock` (paper + goal-livelock retreat) |
 | `--device`    | str  | `cuda`/`cpu`   | Compute device                                                                                                         |
 
 

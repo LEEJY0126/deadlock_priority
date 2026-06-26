@@ -9,7 +9,7 @@ from collections import defaultdict
 import numpy as np
 
 from ..envs.grid import maze, random_forest, sample_start_goals
-from ..envs.simulator import Simulator
+from ..envs.simulator import Simulator, oracle_kwargs
 from ..priority.mst_baseline import mst_priority_field
 
 
@@ -38,19 +38,18 @@ def make_instances(maps, n_agents=8, n_inst=4, seed=999):
     return inst
 
 
-def evaluate(field_provider, instances, max_steps=400, yield_mode="paper",
-             goal_livelock=False):
+def evaluate(field_provider, instances, max_steps=400, oracle="paper"):
     """Return per-kind aggregate metrics for a field provider.
 
-    ``yield_mode`` selects the PIBT deadlock-resolution behavior for the rollouts
-    (``"paper"`` = right-hand rule + livelock; ``"beta"`` = legacy boost).
-    ``goal_livelock`` toggles the opt-in goal-livelock retreat."""
+    ``oracle`` selects the PIBT resolution behavior for the rollouts: ``"beta"``
+    (legacy boost), ``"paper"`` (right-hand rule + livelock), or
+    ``"goal-livelock"`` (paper + the opt-in goal-livelock retreat)."""
     agg = defaultdict(lambda: {"succ": 0, "n": 0, "makespan": [], "flowtime": []})
     for kind, g, sg in instances:
         field = field_provider(g)
         for starts, goals in sg:
             res = Simulator(g, starts, goals, max_steps=max_steps,
-                            yield_mode=yield_mode, goal_livelock=goal_livelock).run(field)
+                            **oracle_kwargs(oracle)).run(field)
             a = agg[kind]
             a["n"] += 1
             a["succ"] += res.success

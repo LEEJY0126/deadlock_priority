@@ -10,6 +10,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import numpy as np
 from tqdm import tqdm
 from src.envs.grid import maze, random_forest
+from src.envs.simulator import ORACLES
 from src.train.oracle import best_field
 
 
@@ -31,9 +32,10 @@ def main():
     ap.add_argument("--n_agents", type=int, default=8)
     ap.add_argument("--n_samples", type=int, default=4)
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--oracle", choices=["beta", "paper"], default="beta",
-                    help="PIBT deadlock-resolution mode the oracle uses to score "
-                         "candidate fields (beta=legacy boost, paper=right-hand rule)")
+    ap.add_argument("--oracle", choices=ORACLES, default="beta",
+                    help="PIBT resolution mode the oracle scores candidates under: "
+                         "beta (legacy boost), paper (right-hand rule + livelock), "
+                         "or goal-livelock (paper + goal-livelock retreat)")
     args = ap.parse_args()
 
     rng = np.random.default_rng(args.seed)
@@ -45,7 +47,7 @@ def main():
         gmap = make_map(kind, args.size, rng)
         fld, info = best_field(gmap, n_agents=args.n_agents,
                                n_samples=args.n_samples, seed=int(rng.integers(1 << 30)),
-                               yield_mode=args.oracle)
+                               oracle=args.oracle)
         occs.append(gmap.occ)
         labels.append(fld)
         kinds_log.append(kind)

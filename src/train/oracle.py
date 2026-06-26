@@ -12,7 +12,7 @@ from __future__ import annotations
 import numpy as np
 
 from ..envs.grid import GridMap, sample_start_goals
-from ..envs.simulator import Simulator
+from ..envs.simulator import Simulator, oracle_kwargs
 from ..priority.mst_baseline import mst_priority_field
 
 
@@ -49,15 +49,16 @@ def candidate_fields(gmap: GridMap, rng=None):
     return fields
 
 
-def score_field(gmap, samples, field, max_steps=400, alpha=0.3, yield_mode="beta"):
+def score_field(gmap, samples, field, max_steps=400, alpha=0.3, oracle="beta"):
     """Mean (success_rate, flowtime) of `field` over fixed start/goal samples.
 
-    ``yield_mode`` is the PIBT deadlock-resolution behavior used to score
-    candidates (default ``"beta"`` matches how the shipped labels were made)."""
+    ``oracle`` is the PIBT resolution behavior used to score candidates
+    (``beta``/``paper``/``goal-livelock``; default ``beta`` matches the shipped
+    labels)."""
     succ, flow = 0, 0.0
     for starts, goals in samples:
         sim = Simulator(gmap, starts, goals, max_steps=max_steps, alpha=alpha,
-                        yield_mode=yield_mode)
+                        **oracle_kwargs(oracle))
         res = sim.run(field)
         succ += res.success
         flow += res.flowtime
@@ -66,10 +67,11 @@ def score_field(gmap, samples, field, max_steps=400, alpha=0.3, yield_mode="beta
 
 
 def best_field(gmap: GridMap, n_agents=8, n_samples=4, seed=0, max_steps=400,
-               yield_mode="beta"):
+               oracle="beta"):
     """Return (best_field, info) for one map by searching the candidate bank.
 
-    ``yield_mode`` is the PIBT mode used to score candidates (``"beta"``/``"paper"``)."""
+    ``oracle`` is the PIBT mode used to score candidates
+    (``beta``/``paper``/``goal-livelock``)."""
     rng = np.random.default_rng(seed)
     samples = []
     for _ in range(n_samples):
@@ -80,7 +82,7 @@ def best_field(gmap: GridMap, n_agents=8, n_samples=4, seed=0, max_steps=400,
     results = []
     for name, fld in candidate_fields(gmap, rng=rng):
         sr, ft = score_field(gmap, samples, fld, max_steps=max_steps,
-                              yield_mode=yield_mode)
+                              oracle=oracle)
         results.append((name, sr, ft))
         key = (sr, -ft)  # maximise success, then minimise flowtime
         if best is None or key > best[0]:

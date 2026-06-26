@@ -46,6 +46,24 @@ from .grid import GridMap
 from .pibt import PIBT
 
 
+# Selectable PIBT resolution behaviours, used by every `--oracle` flag.
+ORACLES = ("beta", "paper", "goal-livelock")
+
+
+def oracle_kwargs(oracle: str) -> dict:
+    """Map an ``--oracle`` choice to ``Simulator`` constructor kwargs.
+
+    - ``beta``          -> legacy anti-starvation boost
+    - ``paper``         -> right-hand rule + livelock (Alg. 3)
+    - ``goal-livelock`` -> ``paper`` plus the opt-in goal-livelock retreat
+    """
+    if oracle == "goal-livelock":
+        return {"yield_mode": "paper", "goal_livelock": True}
+    if oracle in ("beta", "paper"):
+        return {"yield_mode": oracle, "goal_livelock": False}
+    raise ValueError(f"unknown oracle {oracle!r}")
+
+
 @dataclass
 class EpisodeResult:
     success: bool

@@ -10,6 +10,7 @@ import multiprocessing as mp
 import numpy as np
 import torch
 from src.envs.grid import maze, random_forest
+from src.envs.simulator import ORACLES
 from src.priority import features as features_mod
 from src.priority import model as model_mod
 from src.priority.model import build_model, predict_field
@@ -60,10 +61,11 @@ def main():
                     help="parallel rollout workers (0/1 = serial; cpu engine only)")
     ap.add_argument("--engine", choices=["cpu", "vec"], default="cpu",
                     help="reward rollouts: cpu=exact PIBT, vec=GPU-batched approx")
-    ap.add_argument("--oracle", choices=["beta", "paper"], default="beta",
-                    help="PIBT deadlock-resolution mode for the RL reward rollouts "
-                         "(beta=legacy boost, paper=right-hand rule + livelock; "
-                         "cpu engine only -- vec uses its own approximate solver)")
+    ap.add_argument("--oracle", choices=ORACLES, default="beta",
+                    help="PIBT resolution mode for the RL reward rollouts: beta "
+                         "(legacy boost), paper (right-hand rule + livelock), or "
+                         "goal-livelock (paper + goal-livelock retreat). Also drives "
+                         "best.pt selection. cpu engine only -- vec ignores it.")
     ap.add_argument("--reward_weights", default="reward_weight.yaml",
                     help="YAML of reward shaping weights")
     args = ap.parse_args()
@@ -114,7 +116,7 @@ def main():
         # mode as the training rollouts (--oracle), so the chosen iterate is best
         # under the dynamics it was trained on.
         provider = lambda g: predict_field(model, g, device=dev)
-        report = evaluate(provider, eval_inst, yield_mode=args.oracle)
+        report = evaluate(provider, eval_inst, oracle=args.oracle)
         print_report(f"{tag}", report)
         if step is not None:
             for kind, r in report.items():
@@ -127,7 +129,7 @@ def main():
         """Headline metric for best-checkpoint selection: mean success over kinds."""
         return sum(r["success_rate"] for r in report.values()) / len(report)
 
-    print_report("MST baseline", evaluate(baseline_provider, eval_inst, yield_mode=args.oracle))
+    print_report("MST baseline", evaluate(baseline_provider, eval_inst, oracle=args.oracle))
     init_report = bench("learned @ init", step=0)
 
     # Rollouts are pure-CPU NumPy and independent across (map, sample); a spawn
@@ -159,7 +161,7 @@ def main():
             stats = rl_step(model, maps, opt, dev, K=args.K, sigma=args.sigma,
                             n_agents=args.n_agents, rng=rng,
                             anchor=anchor, anchor_w=args.anchor_w, pool=pool,
-                            engine=args.engine, weights=weights, yield_mode=args.oracle)
+                            engine=args.engine, weights=weights, oracle=args.oracle)
             ema = stats["reward"] if ema is None else 0.95 * ema + 0.05 * stats["reward"]
             exp.scalar("reward/step", stats["reward"], it)
             exp.scalar("reward/ema", ema, it)

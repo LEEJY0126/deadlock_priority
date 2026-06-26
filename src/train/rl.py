@@ -13,24 +13,24 @@ import torch
 import torch.nn.functional as F
 
 from ..envs.grid import GridMap, sample_start_goals
-from ..envs.simulator import Simulator
+from ..envs.simulator import Simulator, oracle_kwargs
 from ..priority.features import build_features
 from .reward import DEFAULT_WEIGHTS, RewardWeights
 
 
 def episode_reward(gmap, samples, field, max_steps, weights=DEFAULT_WEIGHTS,
-                   yield_mode="beta"):
+                   oracle="beta"):
     """Mean reward of a field over shared start/goal samples.
 
     Rewards success strongly and, as a dense shaping term, prefers lower makespan
     and flowtime so there is still gradient once success saturates. Shaping
-    coefficients come from `weights` (reward_weight.yaml). ``yield_mode`` is the
-    PIBT deadlock-resolution behavior used for the rollouts (``"beta"``/``"paper"``).
+    coefficients come from `weights` (reward_weight.yaml). ``oracle`` is the PIBT
+    resolution behavior for the rollouts (``beta``/``paper``/``goal-livelock``).
     """
     rs = []
     n = len(samples[0][0])
     for starts, goals in samples:
-        sim = Simulator(gmap, starts, goals, max_steps=max_steps, yield_mode=yield_mode)
+        sim = Simulator(gmap, starts, goals, max_steps=max_steps, **oracle_kwargs(oracle))
         res = sim.run(field)
         rs.append(weights.episode(res.success, res.makespan, res.flowtime, n, max_steps))
     return float(np.mean(rs))
@@ -38,7 +38,7 @@ def episode_reward(gmap, samples, field, max_steps, weights=DEFAULT_WEIGHTS,
 
 def rl_step(model, maps, opt, device, K=8, sigma=0.5, n_agents=8,
             n_samples=2, max_steps=400, rng=None, anchor=None, anchor_w=0.0,
-            pool=None, engine="cpu", weights=DEFAULT_WEIGHTS, yield_mode="beta"):
+            pool=None, engine="cpu", weights=DEFAULT_WEIGHTS, oracle="beta"):
     """One optimization step over a batch of maps. Returns stats dict.
 
     The B*K episode rollouts are independent. ``engine`` selects how rewards are
@@ -75,7 +75,7 @@ def rl_step(model, maps, opt, device, K=8, sigma=0.5, n_agents=8,
         fields_list.append(fields_np)
         for k in range(K):
             tasks.append((maps[b], samples_list[b], fields_np[k], max_steps,
-                          weights, yield_mode))
+                          weights, oracle))
 
     if engine == "vec":
         from .rl_vec import vec_rewards

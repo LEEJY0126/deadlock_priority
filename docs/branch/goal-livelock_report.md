@@ -1,9 +1,11 @@
 # Goal-livelock (`feature/goal-livelock`)
 
 An **opt-in, isolated** deadlock-resolution branch for the case where an agent
-keeps getting bounced off *its own goal* by through-traffic. Off by default
-(`goal_livelock=False`); enable with `--goal_livelock` on `evaluate.py` /
-`simulate.py`. Branched off `feature/right-hand-deadlock`.
+keeps getting bounced off *its own goal* by through-traffic. Exposed as a third
+oracle, **`--oracle goal-livelock`** (= `paper` mode + the goal-livelock retreat),
+across `gen_dataset.py`, `train_rl.py`, `evaluate.py`, and `simulate.py`; the
+underlying `Simulator(goal_livelock=True)` flag stays available too. Branched off
+`feature/right-hand-deadlock`.
 
 ---
 
@@ -91,7 +93,7 @@ goal-livelock on):
 | seed | result | note |
 |------|--------|------|
 | 20 | **8/8** (makespan 33) | the motivating case — now solved (was 6/8) |
-| 54 | 7/8 (fail) | still structural (see limitations) |
+| 54 | 6/8 (fail) | still structural (see limitations) |
 | 56 | 8/8 | |
 | 76 | 8/8 | |
 
@@ -114,9 +116,9 @@ default and not part of the headline numbers.)
 ```bash
 # benchmark with / without goal-livelock
 python scripts/evaluate.py --ckpt runs/rl_transformer.pt --n_per_kind 100 --n_inst 5
-python scripts/evaluate.py --ckpt runs/rl_transformer.pt --n_per_kind 100 --n_inst 5 --goal_livelock
+python scripts/evaluate.py --ckpt runs/rl_transformer.pt --n_per_kind 100 --n_inst 5 --oracle goal-livelock
 
 # watch the motivating instance resolve
 python scripts/simulate.py --ckpt runs/rl_transformer.pt --map narrow --seed 20 \
-    --max_steps 60 --raw --goal_livelock --out runs/gifs/goal_livelock/20.gif
+    --max_steps 60 --raw --oracle goal-livelock --out runs/gifs/goal_livelock/20.gif
 ```

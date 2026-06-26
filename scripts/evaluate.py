@@ -3,6 +3,7 @@ import sys, os, argparse
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import torch
+from src.envs.simulator import ORACLES
 from src.eval.benchmark import (make_eval_maps, make_instances, evaluate,
                                 baseline_provider, print_report)
 from src.priority.model import load_model, predict_field
@@ -14,25 +15,23 @@ def main():
     ap.add_argument("--n_per_kind", type=int, default=10)
     ap.add_argument("--n_inst", type=int, default=4)
     ap.add_argument("--n_agents", type=int, default=8)
-    ap.add_argument("--oracle", choices=["beta", "paper"], default="paper",
-                    help="PIBT deadlock-resolution mode for the eval rollouts "
-                         "(paper=right-hand rule + livelock, beta=legacy boost)")
-    ap.add_argument("--goal_livelock", action="store_true",
-                    help="enable the opt-in goal-livelock retreat (paper mode)")
+    ap.add_argument("--oracle", choices=ORACLES, default="paper",
+                    help="PIBT resolution mode for the eval rollouts: paper "
+                         "(right-hand rule + livelock), beta (legacy boost), or "
+                         "goal-livelock (paper + goal-livelock retreat)")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     args = ap.parse_args()
 
     maps = make_eval_maps(n_per_kind=args.n_per_kind)
     inst = make_instances(maps, n_agents=args.n_agents, n_inst=args.n_inst)
-    kw = dict(yield_mode=args.oracle, goal_livelock=args.goal_livelock)
 
-    print_report("MST baseline", evaluate(baseline_provider, inst, **kw))
+    print_report("MST baseline", evaluate(baseline_provider, inst, oracle=args.oracle))
 
     if args.ckpt:
         model = load_model(args.ckpt, device=args.device)
         provider = lambda g: predict_field(model, g, device=args.device)
         print_report(f"Learned ({os.path.basename(args.ckpt)})",
-                     evaluate(provider, inst, **kw))
+                     evaluate(provider, inst, oracle=args.oracle))
 
 
 if __name__ == "__main__":
