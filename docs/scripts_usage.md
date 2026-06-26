@@ -167,7 +167,7 @@ last step, is pushed exactly one cell off, and its current node out-ranks the go
 node — it enters a stateful **retreat**: it heads for the nearest *open* cell
 (clearance ≥ 2, descending the priority field and crossing equal-priority
 plateaus to get there) and, **once it has reached that temp goal**, holds there
-while any agent that moved on the previous step is within **Manhattan 2** of it;
+while any agent that moved on the previous step is within **Manhattan 3** of it;
 once clear it returns to its real goal. While retreating it keeps its en-route
 priority even on its own goal cell (otherwise the arrived-`-inf` rule would shove
 it back before it can cross out). Implemented in `src/envs/simulator.py`

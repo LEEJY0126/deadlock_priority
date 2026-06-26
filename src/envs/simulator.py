@@ -254,10 +254,10 @@ class Simulator:
         if retreating[i]:
             tg = temp_goal[i]
             # exit only once the agent has actually reached the temp goal *and*
-            # no agent that moved last step is within Manhattan 2 of it (the
+            # no agent that moved last step is within Manhattan 3 of it (the
             # traffic by the open cell has passed); otherwise keep retreating.
             held = any(j != i and pos[j] != last_pos[j] and
-                       abs(pos[j][0] - tg[0]) + abs(pos[j][1] - tg[1]) <= 2
+                       abs(pos[j][0] - tg[0]) + abs(pos[j][1] - tg[1]) <= 3
                        for j in range(self.n))
             if held or pos[i] != tg:
                 subgoal[i] = self._gll_dist(tg)
