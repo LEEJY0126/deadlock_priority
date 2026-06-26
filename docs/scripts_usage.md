@@ -166,12 +166,15 @@ goal sits on another agent's path). When detected — the agent was on its goal
 last step, is pushed exactly one cell off, and its current node out-ranks the goal
 node — it enters a stateful **retreat**: it heads for the nearest *open* cell
 (clearance ≥ 2, descending the priority field and crossing equal-priority
-plateaus to get there) and **holds** there while any agent that moved on the
-previous step is within Manhattan 1 of that temp goal; once clear it returns to
-its real goal. Implemented in `src/envs/simulator.py` (`_goal_livelock_step` /
-`_retreat_node`) and routed via PIBT's `subgoal` path (staying allowed). Off by
-default; a small net win in benchmarks (it can't fix a structurally infeasible
-1-wide corridor where there is no reachable open cell off the through-path).
+plateaus to get there) and, **once it has reached that temp goal**, holds there
+while any agent that moved on the previous step is within **Manhattan 2** of it;
+once clear it returns to its real goal. While retreating it keeps its en-route
+priority even on its own goal cell (otherwise the arrived-`-inf` rule would shove
+it back before it can cross out). Implemented in `src/envs/simulator.py`
+(`_goal_livelock_step` / `_retreat_node`) and routed via PIBT's `subgoal` path
+(staying allowed). Off by default; a net win in benchmarks, though it can't fix a
+structurally infeasible 1-wide corridor where there is no reachable open cell off
+the through-path.
 
 ### Metrics: success / makespan / flowtime
 

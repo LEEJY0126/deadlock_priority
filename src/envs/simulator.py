@@ -96,7 +96,7 @@ class Simulator:
         self.goal_dist = [gmap.bfs_dist(g) for g in goals]
         self.pibt = PIBT(gmap, self.goal_dist)
 
-    def _agent_priorities(self, pos, prev_base, arrived, stuck):
+    def _agent_priorities(self, pos, prev_base, arrived, stuck, retreating=None):
         """Assemble per-agent priority from the position-priority field (Eq. 13).
 
         In legacy ``beta`` mode a dynamic anti-starvation boost proportional to
@@ -107,13 +107,16 @@ class Simulator:
         below *every* en-route agent and are always displaceable (paper Eq. 13a's
         intent). A plain 0 is not enough here: the field is z-scored per map, so an
         en-route agent in a low-priority region can have a negative priority and
-        would otherwise be unable to push a finished agent off a cell on its path."""
+        would otherwise be unable to push a finished agent off a cell on its path.
+        Exception: an agent mid goal-livelock retreat (``retreating[i]``) keeps its
+        en-route priority even on its goal cell -- it is *trying to leave*, and
+        -inf there would let others shove it back before it can cross out."""
         n = self.n
         prio = np.zeros(n, dtype=np.float64)
         base = np.array([self.field[p[0], p[1]] for p in pos], dtype=np.float64)
         for i in range(n):
-            if arrived[i]:
-                prio[i] = -np.inf  # reached goal -> yield to all en-route agents
+            if arrived[i] and not (retreating is not None and retreating[i]):
+                prio[i] = -np.inf  # reached goal -> yield (unless mid-retreat)
                 continue
             # tie-break: penalise returning to a lower-priority node (anti-oscillation)
             di = (i / n) if base[i] >= prev_base[i] else (1.0 + i / n)
@@ -250,12 +253,13 @@ class Simulator:
 
         if retreating[i]:
             tg = temp_goal[i]
-            # exit: hold while any agent that *moved last step* is within
-            # Manhattan 1 of the temp goal; once clear, drop it and go home.
+            # exit only once the agent has actually reached the temp goal *and*
+            # no agent that moved last step is within Manhattan 2 of it (the
+            # traffic by the open cell has passed); otherwise keep retreating.
             held = any(j != i and pos[j] != last_pos[j] and
-                       abs(pos[j][0] - tg[0]) + abs(pos[j][1] - tg[1]) <= 1
+                       abs(pos[j][0] - tg[0]) + abs(pos[j][1] - tg[1]) <= 2
                        for j in range(self.n))
-            if held:
+            if held or pos[i] != tg:
                 subgoal[i] = self._gll_dist(tg)
             else:
                 retreating[i] = False
@@ -308,7 +312,8 @@ class Simulator:
             # moved off it in between (the priority-swap livelock signature).
             oscillating = [pos[i] == last2_pos[i] and pos[i] != last_pos[i]
                            for i in range(self.n)]
-            prio, base = self._agent_priorities(pos, prev_base, arrived, stuck)
+            prio, base = self._agent_priorities(pos, prev_base, arrived, stuck,
+                                                gll_retreating if self.goal_livelock else None)
             # paper resolution, in precedence order: deadlock (Eq. 14 -> right-hand
             # rule) > goal-livelock retreat (opt-in) > livelock back-out (Eq. 18).
             # Back-out yields use `cost` (staying excluded); goal-livelock routes
