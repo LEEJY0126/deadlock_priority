@@ -38,6 +38,7 @@ the symmetry-breaking consistent.
 """
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass, field
 import numpy as np
 
@@ -208,23 +209,29 @@ class Simulator:
     # home. Routed as a PIBT subgoal (staying allowed), not a back-out.   #
     # ------------------------------------------------------------------ #
     def _retreat_node(self, start):
-        """Greedy priority descent from ``start`` to the nearest open cell.
+        """Nearest open cell (clearance >= 2) reachable from ``start`` by a
+        **non-increasing-priority** path.
 
-        Step to the lowest-priority free neighbour repeatedly until the cell is
-        open (clearance >= 2) or no strictly-lower neighbour exists. Returns the
-        cell to use as the temporary (retreat) goal."""
-        cur = start
-        seen = {cur}
-        while self._clearance[cur[0], cur[1]] < 2:
-            nbrs = [u for u in self.gmap.neighbors(cur) if u not in seen]
-            if not nbrs:
-                break
-            nxt = min(nbrs, key=lambda u: (self.field[u[0], u[1]], u[0], u[1]))
-            if self.field[nxt[0], nxt[1]] >= self.field[cur[0], cur[1]]:
-                break  # local minimum -> stop here
-            cur = nxt
-            seen.add(cur)
-        return cur
+        Descend the priority field, *crossing equal-priority plateaus* (an open
+        MST region shares one priority), and return the first cell with
+        clearance >= 2. If none is reachable without going uphill, fall back to
+        the lowest-priority cell reached. BFS so the returned open cell is the
+        nearest one."""
+        q = deque([start])
+        seen = {start}
+        best, best_p = start, self.field[start[0], start[1]]
+        while q:
+            cur = q.popleft()
+            if self._clearance[cur[0], cur[1]] >= 2:
+                return cur
+            cp = self.field[cur[0], cur[1]]
+            if cp < best_p:
+                best, best_p = cur, cp
+            for u in self.gmap.neighbors(cur):
+                if u not in seen and self.field[u[0], u[1]] <= cp:  # descend / plateau
+                    seen.add(u)
+                    q.append(u)
+        return best
 
     def _gll_dist(self, cell):
         """BFS distance-to-``cell`` field (cached), for routing to a temp goal."""

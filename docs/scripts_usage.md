@@ -148,12 +148,30 @@ instances (per-kind success rate, makespan, flowtime).
 | `--n_inst`     | int  | `4`          | Start/goal instances per map                                                                                   |
 | `--n_agents`   | int  | `8`          | Agents per instance                                                                                            |
 | `--oracle`     | str  | `paper`      | PIBT deadlock-resolution mode for eval rollouts: `paper` (right-hand rule + livelock) or `beta` (legacy boost) |
+| `--goal_livelock` | flag | off       | Enable the opt-in goal-livelock retreat (paper mode; see the Goal-livelock section)                                            |
 | `--device`     | str  | `cuda`/`cpu` | Compute device                                                                                                 |
 
 
 ```bash
 python scripts/evaluate.py --ckpt runs/rl.pt --n_per_kind 12 --n_inst 5
+python scripts/evaluate.py --ckpt runs/rl.pt --n_per_kind 100 --n_inst 5 --goal_livelock
 ```
+
+### Goal-livelock (`--goal_livelock`)
+
+An opt-in extra resolution branch (paper mode only), isolated from the existing
+livelock logic; precedence is **deadlock → goal-livelock → livelock**. It targets
+an agent that keeps getting bounced off *its own goal* by through-traffic (the
+goal sits on another agent's path). When detected — the agent was on its goal
+last step, is pushed exactly one cell off, and its current node out-ranks the goal
+node — it enters a stateful **retreat**: it heads for the nearest *open* cell
+(clearance ≥ 2, descending the priority field and crossing equal-priority
+plateaus to get there) and **holds** there while any agent that moved on the
+previous step is within Manhattan 1 of that temp goal; once clear it returns to
+its real goal. Implemented in `src/envs/simulator.py` (`_goal_livelock_step` /
+`_retreat_node`) and routed via PIBT's `subgoal` path (staying allowed). Off by
+default; a small net win in benchmarks (it can't fix a structurally infeasible
+1-wide corridor where there is no reachable open cell off the through-path).
 
 ### Metrics: success / makespan / flowtime
 
@@ -230,6 +248,7 @@ trails, goals as matching-color stars. Saves a GIF (or shows a live window).
 | `--raw`       | flag | off            | Add a top row of raw-priority-map subplots (values annotated per cell)                                                 |
 | `--live`      | flag | off            | Show a window instead of saving                                                                                        |
 | `--oracle`    | str  | `paper`        | PIBT deadlock-resolution mode for the animated episodes: `paper` (right-hand rule + livelock) or `beta` (legacy boost) |
+| `--goal_livelock` | flag | off        | Enable the opt-in goal-livelock retreat (paper mode; see the Goal-livelock section)                                                   |
 | `--device`    | str  | `cuda`/`cpu`   | Compute device                                                                                                         |
 
 
