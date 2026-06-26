@@ -55,9 +55,9 @@ def draw_raw_map(ax, field, occ, fontsize):
     ax.set_xticks([]); ax.set_yticks([])
 
 
-def run(g, starts, goals, field, max_steps, yield_mode="paper"):
+def run(g, starts, goals, field, max_steps, yield_mode="paper", goal_livelock=False):
     sim = Simulator(g, starts, goals, max_steps=max_steps, log_positions=True,
-                    yield_mode=yield_mode)
+                    yield_mode=yield_mode, goal_livelock=goal_livelock)
     res = sim.run(field)
     return res
 
@@ -79,6 +79,8 @@ def main():
     ap.add_argument("--oracle", choices=["beta", "paper"], default="paper",
                     help="PIBT deadlock-resolution mode for the simulated episodes "
                          "(paper=right-hand rule + livelock, beta=legacy boost)")
+    ap.add_argument("--goal_livelock", action="store_true",
+                    help="enable the opt-in goal-livelock retreat (paper mode)")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     args = ap.parse_args()
 
@@ -99,7 +101,8 @@ def main():
         print(f"[warn] {args.ckpt} not found -- showing MST only")
 
     # run the episode under each field
-    results = [(name, fld, run(g, starts, goals, fld, args.max_steps, args.oracle))
+    results = [(name, fld, run(g, starts, goals, fld, args.max_steps, args.oracle,
+                               args.goal_livelock))
                for name, fld in panels]
     T = max(len(r.positions_log) for _, _, r in results)
 

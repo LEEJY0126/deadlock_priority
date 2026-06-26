@@ -22,35 +22,35 @@ class PIBT:
         self.goal_dist = goal_dist
         self.n = len(goal_dist)
 
-    def _candidates(self, i, cur, cost=None):
-        """Next-cell candidates for agent i, sorted by a cost field (asc).
+    def _candidates(self, i, cur, override=None, allow_stay=True):
+        """Next-cell candidates for agent i, sorted by a distance field (asc).
 
-        `cost` (H,W) overrides the default goal-distance heuristic; it is how a
-        *yielding* agent is routed toward its lowest-priority neighbor instead of
-        its goal (the paper's Alg. 3 line 12 subgoal reassignment).
+        `override` (H,W), if given, replaces the default goal-distance heuristic.
+        `allow_stay` controls whether the current cell is itself a candidate:
+          - back-out *cost* fields pass ``allow_stay=False`` so a yielding agent
+            must step to a neighbour (paper Alg. 3 line 12);
+          - a *subgoal* field (e.g. goal-livelock retreat) passes
+            ``allow_stay=True`` so the agent can hold once it reaches the subgoal.
         """
         cands = self.gmap.neighbors(cur)
-        if cost is None:
-            dist = self.goal_dist[i]
-            cands = cands + [cur]  # waiting in place is allowed
-        else:
-            # yielding: must step to a *neighbour* (paper Alg. 3 line 12 -> the
-            # lowest-priority adjacent node), so the current cell is excluded
-            # here; staying put remains available only via func_pibt's
-            # last-resort fallback if no neighbour is free.
-            dist = cost
+        dist = self.goal_dist[i] if override is None else override
+        if allow_stay:
+            cands = cands + [cur]
         # small deterministic tie-break on coordinates keeps runs reproducible
         cands.sort(key=lambda u: (dist[u[0], u[1]], u[0], u[1]))
         return cands
 
-    def step(self, positions, priorities, rng=None, cost=None):
+    def step(self, positions, priorities, rng=None, cost=None, subgoal=None):
         """Advance one timestep.
 
         positions: list[(r,c)] current cell per agent.
         priorities: array[n] float; higher plans first (ties broken by index).
         cost: optional list[n] of (H,W) fields; cost[i] (if not None) replaces
-            agent i's goal-distance heuristic this step (used to make a yielding
-            agent descend toward its lowest-priority adjacent node).
+            agent i's goal heuristic and **excludes staying** (back-out yield).
+        subgoal: optional list[n] of (H,W) distance fields; subgoal[i] (if not
+            None) routes agent i toward that target with **staying allowed** (a
+            reassigned subgoal it can hold). `cost` takes precedence over
+            `subgoal` if both are set for an agent.
         Returns list[(r,c)] next cell per agent (conflict-free).
         """
         n = self.n
@@ -62,8 +62,13 @@ class PIBT:
         def func_pibt(i, caller=None):
             # caller.now is forbidden to avoid head-on swaps
             forbidden = cur[caller] if caller is not None else None
-            ci = cost[i] if cost is not None else None
-            for u in self._candidates(i, cur[i], ci):
+            if cost is not None and cost[i] is not None:
+                override, allow_stay = cost[i], False
+            elif subgoal is not None and subgoal[i] is not None:
+                override, allow_stay = subgoal[i], True
+            else:
+                override, allow_stay = None, True
+            for u in self._candidates(i, cur[i], override, allow_stay):
                 if u in occupied_next:
                     continue
                 if u == forbidden:

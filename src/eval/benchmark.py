@@ -38,17 +38,19 @@ def make_instances(maps, n_agents=8, n_inst=4, seed=999):
     return inst
 
 
-def evaluate(field_provider, instances, max_steps=400, yield_mode="paper"):
+def evaluate(field_provider, instances, max_steps=400, yield_mode="paper",
+             goal_livelock=False):
     """Return per-kind aggregate metrics for a field provider.
 
     ``yield_mode`` selects the PIBT deadlock-resolution behavior for the rollouts
-    (``"paper"`` = right-hand rule + livelock; ``"beta"`` = legacy boost)."""
+    (``"paper"`` = right-hand rule + livelock; ``"beta"`` = legacy boost).
+    ``goal_livelock`` toggles the opt-in goal-livelock retreat."""
     agg = defaultdict(lambda: {"succ": 0, "n": 0, "makespan": [], "flowtime": []})
     for kind, g, sg in instances:
         field = field_provider(g)
         for starts, goals in sg:
             res = Simulator(g, starts, goals, max_steps=max_steps,
-                            yield_mode=yield_mode).run(field)
+                            yield_mode=yield_mode, goal_livelock=goal_livelock).run(field)
             a = agg[kind]
             a["n"] += 1
             a["succ"] += res.success

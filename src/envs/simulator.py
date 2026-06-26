@@ -60,7 +60,8 @@ class Simulator:
     def __init__(self, gmap: GridMap, starts, goals, max_steps=256,
                  alpha=0.3, beta=0.3, stall_limit=None, log_positions=False,
                  yield_mode="paper", yield_patience=1,
-                 deadlock_resolution=True, repulsive_dist=1.0):
+                 deadlock_resolution=True, repulsive_dist=1.0,
+                 goal_livelock=False):
         assert len(starts) == len(goals)
         self.gmap = gmap
         self.starts = list(starts)
@@ -75,6 +76,10 @@ class Simulator:
         # by default for fidelity; disable to ablate it back to livelock-only.
         self.deadlock_resolution = deadlock_resolution
         self.repulsive_dist = repulsive_dist  # d_r in Eq. 15, in grid cells
+        # goal-livelock: an isolated, opt-in resolution for an agent that is
+        # repeatedly pushed off its own goal (precedence deadlock > goal-livelock
+        # > livelock). See _goal_livelock_step. Independent of the livelock branch.
+        self.goal_livelock = goal_livelock
         # cached coordinate grids for building right-hand-rule cost fields
         self._RR, self._CC = np.mgrid[0:gmap.H, 0:gmap.W].astype(np.float64)
         # yield_patience: stuck steps before a blocked lower-priority agent backs
@@ -194,6 +199,72 @@ class Simulator:
         g_r, g_c = p_i[0] + disp[0], p_i[1] + disp[1]
         return (self._RR - g_r) ** 2 + (self._CC - g_c) ** 2
 
+    # ------------------------------------------------------------------ #
+    # Goal-livelock (opt-in, isolated). An agent that was sitting on its  #
+    # own goal and gets pushed off keeps oscillating back onto it,        #
+    # blocking through-traffic. Instead it enters a stateful *retreat*:   #
+    # descend the priority field to the nearest open cell (the temp goal) #
+    # and hold there until the traffic by that cell has passed, then go   #
+    # home. Routed as a PIBT subgoal (staying allowed), not a back-out.   #
+    # ------------------------------------------------------------------ #
+    def _retreat_node(self, start):
+        """Greedy priority descent from ``start`` to the nearest open cell.
+
+        Step to the lowest-priority free neighbour repeatedly until the cell is
+        open (clearance >= 2) or no strictly-lower neighbour exists. Returns the
+        cell to use as the temporary (retreat) goal."""
+        cur = start
+        seen = {cur}
+        while self._clearance[cur[0], cur[1]] < 2:
+            nbrs = [u for u in self.gmap.neighbors(cur) if u not in seen]
+            if not nbrs:
+                break
+            nxt = min(nbrs, key=lambda u: (self.field[u[0], u[1]], u[0], u[1]))
+            if self.field[nxt[0], nxt[1]] >= self.field[cur[0], cur[1]]:
+                break  # local minimum -> stop here
+            cur = nxt
+            seen.add(cur)
+        return cur
+
+    def _gll_dist(self, cell):
+        """BFS distance-to-``cell`` field (cached), for routing to a temp goal."""
+        d = self._gll_distcache.get(cell)
+        if d is None:
+            d = self.gmap.bfs_dist(cell)
+            self._gll_distcache[cell] = d
+        return d
+
+    def _goal_livelock_step(self, i, pos, last_pos, arrived, retreating,
+                            temp_goal, subgoal):
+        """Update agent i's goal-livelock state and, if retreating, set its
+        subgoal (route to the temp goal, staying allowed). Caller guarantees i is
+        not already handled by the deadlock branch."""
+        goal = self.goals[i]
+
+        if retreating[i]:
+            tg = temp_goal[i]
+            # exit: hold while any agent that *moved last step* is within
+            # Manhattan 1 of the temp goal; once clear, drop it and go home.
+            held = any(j != i and pos[j] != last_pos[j] and
+                       abs(pos[j][0] - tg[0]) + abs(pos[j][1] - tg[1]) <= 1
+                       for j in range(self.n))
+            if held:
+                subgoal[i] = self._gll_dist(tg)
+            else:
+                retreating[i] = False
+                temp_goal[i] = None
+            return
+
+        # enter: was on its goal last step, pushed exactly one cell off, and the
+        # current node outranks the goal node (it was displaced *upward*).
+        if (last_pos[i] == goal
+                and abs(pos[i][0] - goal[0]) + abs(pos[i][1] - goal[1]) == 1
+                and self.field[pos[i][0], pos[i][1]] > self.field[goal[0], goal[1]]):
+            tg = self._retreat_node(pos[i])
+            retreating[i] = True
+            temp_goal[i] = tg
+            subgoal[i] = self._gll_dist(tg)
+
     def run(self, priority_field: np.ndarray, rng=None) -> EpisodeResult:
         # Normalize the field to unit spread over free cells so the tie-break
         # (alpha) and stuck-boost (beta) act in comparable units regardless of
@@ -217,6 +288,12 @@ class Simulator:
         prev_gdist = np.array([self.goal_dist[i][pos[i]] for i in range(self.n)])
         last_pos = list(pos)   # config one step ago (Eq. 14a: "did not move")
         last2_pos = list(pos)  # config two steps ago (period-2 oscillation test)
+        # goal-livelock retreat state (opt-in, see _goal_livelock_step)
+        gll_retreating = [False] * self.n
+        gll_temp_goal = [None] * self.n
+        if self.goal_livelock:
+            self._clearance = self.gmap.clearance()
+            self._gll_distcache = {}
 
         for t in range(1, self.max_steps + 1):
             arrived = [pos[i] == self.goals[i] for i in range(self.n)]
@@ -225,26 +302,36 @@ class Simulator:
             oscillating = [pos[i] == last2_pos[i] and pos[i] != last_pos[i]
                            for i in range(self.n)]
             prio, base = self._agent_priorities(pos, prev_base, arrived, stuck)
-            # paper resolution: deadlock (Eq. 14 -> right-hand rule, Eq. 15) takes
-            # precedence over the livelock fallback (Eq. 18 -> lowest-priority
-            # neighbour). Both are expressed as per-agent PIBT cost overrides.
+            # paper resolution, in precedence order: deadlock (Eq. 14 -> right-hand
+            # rule) > goal-livelock retreat (opt-in) > livelock back-out (Eq. 18).
+            # Back-out yields use `cost` (staying excluded); goal-livelock routes
+            # to a temp goal via `subgoal` (staying allowed).
             cost = None
+            subgoal = None
             if self.yield_mode == "paper":
                 cost = [None] * self.n
+                subgoal = [None] * self.n
                 if self.deadlock_resolution:
                     blocker = self._deadlocked(pos, last_pos, arrived)
                     for i in range(self.n):
                         if blocker[i] >= 0:
                             cost[i] = self._right_hand_cost(pos[i], pos[blocker[i]])
+                if self.goal_livelock:
+                    for i in range(self.n):
+                        if cost[i] is None:  # deadlock has precedence
+                            self._goal_livelock_step(i, pos, last_pos, arrived,
+                                                     gll_retreating, gll_temp_goal, subgoal)
                 yld = self._yielders(pos, prio, base, arrived, stuck, oscillating)
                 for i in range(self.n):
-                    if cost[i] is None and yld[i]:
+                    if cost[i] is None and subgoal[i] is None and yld[i]:
                         cost[i] = self.field
                 if all(c is None for c in cost):
                     cost = None
+                if all(s is None for s in subgoal):
+                    subgoal = None
             last2_pos = last_pos
             last_pos = list(pos)
-            pos = self.pibt.step(pos, prio, rng=rng, cost=cost)
+            pos = self.pibt.step(pos, prio, rng=rng, cost=cost, subgoal=subgoal)
             prev_base = np.array([self.field[p[0], p[1]] for p in pos])
             # update per-agent stuck counter (reset on progress toward own goal)
             gdist = np.array([self.goal_dist[i][pos[i]] for i in range(self.n)])

@@ -17,19 +17,22 @@ def main():
     ap.add_argument("--oracle", choices=["beta", "paper"], default="paper",
                     help="PIBT deadlock-resolution mode for the eval rollouts "
                          "(paper=right-hand rule + livelock, beta=legacy boost)")
+    ap.add_argument("--goal_livelock", action="store_true",
+                    help="enable the opt-in goal-livelock retreat (paper mode)")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     args = ap.parse_args()
 
     maps = make_eval_maps(n_per_kind=args.n_per_kind)
     inst = make_instances(maps, n_agents=args.n_agents, n_inst=args.n_inst)
+    kw = dict(yield_mode=args.oracle, goal_livelock=args.goal_livelock)
 
-    print_report("MST baseline", evaluate(baseline_provider, inst, yield_mode=args.oracle))
+    print_report("MST baseline", evaluate(baseline_provider, inst, **kw))
 
     if args.ckpt:
         model = load_model(args.ckpt, device=args.device)
         provider = lambda g: predict_field(model, g, device=args.device)
         print_report(f"Learned ({os.path.basename(args.ckpt)})",
-                     evaluate(provider, inst, yield_mode=args.oracle))
+                     evaluate(provider, inst, **kw))
 
 
 if __name__ == "__main__":
