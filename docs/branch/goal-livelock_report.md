@@ -52,6 +52,11 @@ without going uphill (`_retreat_node`).
   suppressed while retreating) — otherwise it is `-inf` while crossing `(7,7)` and
   gets shoved back before it can pass.
 
+**Re-selection.** If the agent had reached the temp goal and is then pushed off it
+(two agents contending for the *same* open cell — e.g. seed 28), it immediately
+re-selects a **different** open cell (`_retreat_node(pos, exclude={old})`) so they
+stop fighting over one cell.
+
 **Exit (return to real goal).** Only once the agent has **reached** the temp goal
 *and* no agent that moved on the previous step is within **Manhattan 3** of it
 (the traffic by the open cell has passed). Then drop the temp goal and route home.
@@ -69,6 +74,7 @@ the `subgoal` route added to `pibt.step`.
 | `57993dc` | **keep priority while retreating** + **exit only after reaching temp goal** + Manhattan 2 | tracing seed 20 showed the agent was `-inf` on its goal cell and got shoved back; and the exit released *before* it even reached the open cell |
 | `b9b738a` | exit hold radius **Manhattan 3** | the blocker, pushed up its own column, hadn't cleared the chokepoint at radius ≤ 2; radius 3 waits long enough → **seed 20 solved** |
 | `d604a42` | detect on priority **>= goal** (was strictly >) | also retreat when pushed onto an equal-priority open region; MST on 94/89/61 → 96/90/64 |
+| *(this branch)* | **temp-goal re-selection** when pushed off a reached temp goal (pick a different `clearance ≥ 2` cell) | seed 28: red and another agent kept fighting over the *same* open cell; re-selecting a different one breaks it → **seed 28 solved** |
 
 The decisive insight (raised in review): with retreat-keeping priority, the
 agent at `(7,7)` [raw 4] **out-ranks** the blocker at `(7,8)` [raw 3], so it
@@ -78,34 +84,35 @@ earlier "head-on, can't pass" reasoning was wrong.
 ## 4. Results
 
 Held-out, 8 agents, 21×21, **n=100/kind** (20 maps × 5 instances), `paper` mode,
-learned model `runs/rl_transformer.pt` (Transformer, dim96). Success rate, goal-
-livelock **off → on** (final, Manhattan 3):
+learned model `runs/rl.pt` (Transformer). Success rate, goal-livelock
+**off → on** (clearance ≥ 2 + Manhattan-3 hold + re-selection):
 
 | map | MST off → on | Learned off → on |
 |-----|:------------:|:----------------:|
-| forest | 92 → **96** | 94 → **97** |
-| wide   | 87 → **90** | 85 → **92** |
-| narrow | 57 → **64** | 65 → **69** |
+| forest | 92 → **100** | 96 → **97** |
+| wide   | 87 → **97**  | 87 → **95** |
+| narrow | 57 → **73**  | 58 → **69** |
 
-No regression; a clear gain on wide/narrow. Diagnostic seeds (MST, `paper`,
-goal-livelock on):
+No regression; a large gain on wide/narrow (re-selection added the last jump:
+MST 96/90/64 → 100/97/73). Diagnostic seeds (MST, `paper`, goal-livelock on) —
+all now solved:
 
 | seed | result | note |
 |------|--------|------|
-| 20 | **8/8** (makespan 33) | the motivating case — now solved (was 6/8) |
-| 54 | 6/8 (fail) | still structural (see limitations) |
-| 56 | 8/8 | |
-| 76 | 8/8 | |
+| 20 | **8/8** | the original motivating case |
+| 28 | **8/8** | fixed by temp-goal re-selection (two agents shared one open cell) |
+| 54 | **8/8** | |
+| 56 | **8/8** | |
+| 76 | **8/8** | |
 
 (n=100 is noisy; a full n=500 sweep is a follow-up since goal-livelock is off by
 default and not part of the headline numbers.)
 
 ## 5. Limitations
 
-- **Seed 54 still fails.** Not every "goal on a path" instance has a reachable
-  open cell whose hold neighbourhood the blocker passes through; a genuinely
-  infeasible 1-wide corridor (no passing place at all) cannot be resolved by any
-  local rule.
+- **Genuinely infeasible instances remain.** All five diagnostic seeds now solve,
+  but a truly infeasible 1-wide corridor (no reachable open cell off the
+  through-path, or no passing place at all) cannot be resolved by any local rule.
 - **Manhattan 3 / clearance ≥ 2 are tuned, not derived.** They work on these
   braided 21×21 mazes; other map distributions may want different values.
 - **Not in training / headline numbers.** Off by default; the shipped checkpoints

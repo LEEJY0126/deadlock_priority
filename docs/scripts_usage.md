@@ -168,9 +168,12 @@ the goal node's — it enters a stateful **retreat**: it heads for the nearest *
 (clearance ≥ 2, descending the priority field and crossing equal-priority
 plateaus to get there) and, **once it has reached that temp goal**, holds there
 while any agent that moved on the previous step is within **Manhattan 3** of it;
-once clear it returns to its real goal. While retreating it keeps its en-route
-priority even on its own goal cell (otherwise the arrived-`-inf` rule would shove
-it back before it can cross out). Implemented in `src/envs/simulator.py`
+once clear it returns to its real goal. If it reaches the temp goal but is then
+**pushed off it** (two agents contending for the same open cell), it immediately
+**re-selects a different** open cell (excluding the one it just lost). While
+retreating it keeps its en-route priority even on its own goal cell (otherwise the
+arrived-`-inf` rule would shove it back before it can cross out). Implemented in
+`src/envs/simulator.py`
 (`_goal_livelock_step` / `_retreat_node`) and routed via PIBT's `subgoal` path
 (staying allowed). Opt-in (other oracles leave it off); a net win in benchmarks,
 though it can't fix a structurally infeasible 1-wide corridor where there is no

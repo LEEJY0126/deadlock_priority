@@ -226,24 +226,23 @@ class Simulator:
     # own goal and gets pushed off keeps oscillating back onto it,        #
     # blocking through-traffic. Instead it enters a stateful *retreat*:   #
     # descend the priority field to the nearest open cell (the temp goal) #
-    # and hold there until the traffic by that cell has passed, then go   #
+    # and hold there until the traffic by that cell has passed, then go    #
     # home. Routed as a PIBT subgoal (staying allowed), not a back-out.   #
     # ------------------------------------------------------------------ #
-    def _retreat_node(self, start):
-        """Nearest open cell (clearance >= 2) reachable from ``start`` by a
+    def _retreat_node(self, start, exclude=()):
+        """Nearest **open** cell (clearance >= 2) reachable from ``start`` by a
         **non-increasing-priority** path.
 
-        Descend the priority field, *crossing equal-priority plateaus* (an open
-        MST region shares one priority), and return the first cell with
-        clearance >= 2. If none is reachable without going uphill, fall back to
-        the lowest-priority cell reached. BFS so the returned open cell is the
-        nearest one."""
+        Descend the priority field, *crossing equal-priority plateaus*, and return
+        the first cell with clearance >= 2 that is not in ``exclude``. If none is
+        reachable without going uphill, fall back to the lowest-priority cell
+        reached. BFS so the returned open cell is the nearest one."""
         q = deque([start])
         seen = {start}
         best, best_p = start, self.field[start[0], start[1]]
         while q:
             cur = q.popleft()
-            if self._clearance[cur[0], cur[1]] >= 2:
+            if cur not in exclude and self._clearance[cur[0], cur[1]] >= 2:
                 return cur
             cp = self.field[cur[0], cur[1]]
             if cp < best_p:
@@ -271,6 +270,12 @@ class Simulator:
 
         if retreating[i]:
             tg = temp_goal[i]
+            # re-selection: if it had reached the temp goal and is now pushed off
+            # it (two agents fighting over the same open cell), pick a *different*
+            # open cell immediately so they stop contending for the same one.
+            if last_pos[i] == tg and pos[i] != tg:
+                tg = self._retreat_node(pos[i], exclude={tg})
+                temp_goal[i] = tg
             # exit only once the agent has actually reached the temp goal *and*
             # no agent that moved last step is within Manhattan 3 of it (the
             # traffic by the open cell has passed); otherwise keep retreating.
