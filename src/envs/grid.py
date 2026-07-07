@@ -110,7 +110,73 @@ def random_forest(H=24, W=24, n_obstacles=40, max_block=2, rng=None) -> GridMap:
         bh = rng.integers(1, max_block + 1)
         bw = rng.integers(1, max_block + 1)
         occ[r:min(r + bh, H - 1), c:min(c + bw, W - 1)] = 1
+    # Overlapping blocks can wall off a pocket of free cells; reconnect (a no-op
+    # for already-connected maps, so RNG-dependent maps stay identical).
+    _connect_free_space(occ)
     return GridMap(occ)
+
+
+def _connect_free_space(occ: np.ndarray) -> None:
+    """Carve minimal *interior* walls so all free cells form one component.
+
+    Recursive division can seal its own passages -- a child wall landing on a
+    parent's passage column disconnects the two halves, leaving an unsolvable
+    split map (~20% of 1-wide mazes). This repair grows the largest free
+    component outward, BFS-ing across walls to the nearest other component and
+    carving only the wall cells on that shortest path, until the free space is
+    connected. It is **deterministic (no RNG)**: already-connected maps are left
+    byte-identical, so the generator's RNG stream and every downstream start/goal
+    sample are unchanged; only split maps are altered. The outer border ring is
+    never carved. Mutates ``occ`` in place.
+    """
+    H, W = occ.shape
+    moves = MOVES[1:]
+
+    def components():
+        labels = np.full((H, W), -1, dtype=np.int64)
+        comps: list[list[tuple[int, int]]] = []
+        for r in range(H):
+            for c in range(W):
+                if occ[r, c] == 0 and labels[r, c] == -1:
+                    lab, cells, q = len(comps), [], deque([(r, c)])
+                    labels[r, c] = lab
+                    while q:
+                        y, x = q.popleft()
+                        cells.append((y, x))
+                        for dr, dc in moves:
+                            ny, nx = y + dr, x + dc
+                            if 0 <= ny < H and 0 <= nx < W and occ[ny, nx] == 0 \
+                                    and labels[ny, nx] == -1:
+                                labels[ny, nx] = lab
+                                q.append((ny, nx))
+                    comps.append(cells)
+        return labels, comps
+
+    labels, comps = components()
+    while len(comps) > 1:
+        comps.sort(key=len, reverse=True)          # grow the largest component
+        target = labels[comps[0][0]]
+        prev, seen, q, found = {}, set(comps[0]), deque(comps[0]), None
+        while q and found is None:
+            y, x = q.popleft()
+            for dr, dc in moves:
+                ny, nx = y + dr, x + dc
+                if not (0 <= ny < H and 0 <= nx < W) or (ny, nx) in seen:
+                    continue
+                if occ[ny, nx] == 1 and (ny in (0, H - 1) or nx in (0, W - 1)):
+                    continue                        # never carve the border ring
+                seen.add((ny, nx))
+                prev[(ny, nx)] = (y, x)
+                if occ[ny, nx] == 0 and labels[ny, nx] != target:
+                    found = (ny, nx)                # reached another component
+                    break
+                q.append((ny, nx))
+        node = found                                # carve walls back to target
+        while node in prev:
+            if occ[node] == 1:
+                occ[node] = 0
+            node = prev[node]
+        labels, comps = components()
 
 
 def maze(H=25, W=25, corridor=1, braid=0.25, rng=None) -> GridMap:
@@ -166,6 +232,11 @@ def maze(H=25, W=25, corridor=1, braid=0.25, rng=None) -> GridMap:
             if free_nb >= 2:
                 occ[r, c] = 0
                 removed += 1
+
+    # Recursive division (and braiding) can leave free space in disconnected
+    # components -> unsolvable. Repair deterministically; connected maps are
+    # untouched (see _connect_free_space), so RNG-dependent maps stay identical.
+    _connect_free_space(occ)
     return GridMap(occ)
 
 
