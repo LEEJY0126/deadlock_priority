@@ -17,12 +17,13 @@ import torch
 from src.envs.grid import maze, random_forest
 from src.envs.simulator import ORACLES
 from src.priority.model import build_model, load_model
-from src.priority.model_embedding import EmbeddingPriorityModel
+from src.priority.model_embedding import EmbeddingPriorityModel, InferenceTimer
 from src.train.reward import StepRewardWeights
 from src.train.rl_embedding import (make_critic, train_embedding_episode,
                                     train_embedding_ppo_step)
 from src.eval.benchmark import (make_eval_maps, make_instances, evaluate,
-                                evaluate_embedding, baseline_provider, print_report)
+                                evaluate_embedding, baseline_provider, print_report,
+                                print_inference_timing)
 from src.envs.grid import sample_start_goals
 
 
@@ -61,6 +62,11 @@ def main():
     ap.add_argument("--dim", type=int, default=128)
     ap.add_argument("--enc_depth", type=int, default=4)
     ap.add_argument("--dec_depth", type=int, default=2)
+    ap.add_argument("--history", type=int, default=8,
+                    help="occupancy-history frames fed to the decoder")
+    ap.add_argument("--hist_dim", type=int, default=64, help="history encoder dim")
+    ap.add_argument("--hist_depth", type=int, default=2,
+                    help="history encoder transformer layers")
     ap.add_argument("--oracle", choices=ORACLES, default="paper")
     ap.add_argument("--reward_weights", default=None,
                     help="YAML of per-step reward weights (progress/time_penalty/success/reached)")
@@ -84,7 +90,8 @@ def main():
         assert isinstance(model, EmbeddingPriorityModel), "--init must be an embedding ckpt"
     else:
         model = build_model("embedding", dim=args.dim, enc_depth=args.enc_depth,
-                            dec_depth=args.dec_depth).to(args.device)
+                            dec_depth=args.dec_depth, history=args.history,
+                            hist_dim=args.hist_dim, hist_depth=args.hist_depth).to(args.device)
     critic = make_critic(model).to(args.device)
     opt = torch.optim.Adam(list(model.parameters()) + list(critic.parameters()),
                            lr=args.lr)
@@ -102,12 +109,14 @@ def main():
     best_path = os.path.splitext(args.out)[0] + "_best.pt"
 
     def do_eval(tag):
-        """Report MST vs embedding; return mean embedding success over kinds."""
+        """Report MST vs embedding (+ enc/dec latency); return mean success."""
         print_report(f"MST baseline @{tag}", evaluate(baseline_provider, eval_inst,
                                                       oracle=args.oracle))
+        timer = InferenceTimer()
         rep = evaluate_embedding(model, eval_inst, oracle=args.oracle,
-                                 device=args.device)
+                                 device=args.device, timer=timer)
         print_report(f"Embedding @{tag}", rep)
+        print_inference_timing(f"Embedding @{tag}", timer)
         return float(np.mean([rep[k]["success_rate"] for k in rep]))
 
     kinds = ["forest", "wide", "narrow"]

@@ -54,6 +54,9 @@ saves a checkpoint that `evaluate.py`/`load_model` pick up automatically.
 | `--dim` | int | `128` | Embedding dim (cold start; inherited from `--init`) |
 | `--enc_depth` | int | `4` | MapEncoder transformer layers (cold start) |
 | `--dec_depth` | int | `2` | PriorityDecoder transformer layers (cold start) |
+| `--history` | int | `8` | Occupancy-history frames fed to the decoder (temporal context) |
+| `--hist_dim` | int | `64` | HistoryEncoder embedding dim |
+| `--hist_depth` | int | `2` | HistoryEncoder transformer layers |
 | `--oracle` | str | `paper` | PIBT resolution for the rollouts (`paper` recommended — see design doc) |
 | `--reward_weights` | str | `None` | YAML of **per-step** reward weights (see below); default weights if omitted |
 | `--eval_every` | int | `200` | Greedy benchmark + checkpoint cadence (iters) |
@@ -111,6 +114,13 @@ auto-routing behavior on this branch.
 from live occupancy (a *dynamic* field, not one static field) instead of the
 static field-provider path. All other checkpoints and the MST/elapsed-PIBT
 baselines are unchanged, so the report is directly comparable across methods.
+
+**Inference latency.** For the embedding model, eval also prints a mean
+encoder/decoder latency line (CUDA-synchronized), e.g.
+`latency: encoder 7.60 ms/map (n=18), decoder 6.19 ms/step (n=1041)` — the
+encoder runs once per map, the decoder once per step, so this quantifies the
+once-per-map / per-step cost split. The same line appears in `train_embedding_rl.py`
+at every periodic eval.
 
 ```bash
 # untrained embedding vs MST vs elapsed-PIBT (sanity baseline)
@@ -197,7 +207,7 @@ extra `critic` key:
 | `arch` | `str` | `"embedding"` — routes `build_model`/`evaluate.py` to the dynamic path |
 | `model` | `state_dict` | `EmbeddingPriorityModel` weights (MapEncoder + PriorityDecoder) |
 | `critic` | `state_dict` | `Critic` weights (value baseline; unused at eval, kept for resuming) |
-| `config` | `dict` | Constructor kwargs: `dim`, `enc_depth`, `dec_depth`, `heads`, `mlp_ratio`, `dropout`, `occ_dim`, `cin` |
+| `config` | `dict` | Constructor kwargs: `dim`, `enc_depth`, `dec_depth`, `heads`, `mlp_ratio`, `dropout`, `occ_dim`, `cin`, `history`, `hist_dim`, `hist_depth` |
 
 `load_model` reads `arch` and rebuilds the matching model automatically; the
 `critic` key is ignored by eval and only needed to resume training. Unlike the

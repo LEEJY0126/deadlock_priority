@@ -81,23 +81,31 @@ def evaluate(field_provider, instances, max_steps=400, oracle="paper"):
 
 
 def evaluate_embedding(model, instances, max_steps=400, oracle="paper",
-                       device="cpu"):
+                       device="cpu", timer=None):
     """Per-kind metrics for the dynamic embedding priority model.
 
     Unlike :func:`evaluate` (one static field per map), the embedding field is
     recomputed each step from live occupancy, so a fresh ``field_fn`` is built
     per (map, start/goal) instance and passed to ``Simulator.run(field_fn=...)``.
     Same instances, metrics, and oracle as :func:`evaluate`, so it is directly
-    comparable to the MST/learned reports."""
+    comparable to the MST/learned reports. Pass an ``InferenceTimer`` to also
+    record mean encoder/decoder latency over the eval."""
     from ..priority.model_embedding import embedding_field_fn  # lazy: torch dep
     agg = _new_agg()
     for kind, g, sg in instances:
         for starts, goals in sg:
-            field_fn = embedding_field_fn(model, g, goals, device=device)
+            field_fn = embedding_field_fn(model, g, goals, device=device, timer=timer)
             res = Simulator(g, starts, goals, max_steps=max_steps,
                             **oracle_kwargs(oracle)).run(field_fn=field_fn)
             _record(agg, kind, res)
     return _finalize(agg)
+
+
+def print_inference_timing(name, timer):
+    """One-line mean encoder/decoder latency (encoder once per map, decoder per step)."""
+    print(f"  {name} latency: encoder {timer.encode_ms:6.2f} ms/map "
+          f"(n={timer.encode_n}), decoder {timer.decode_ms:6.3f} ms/step "
+          f"(n={timer.decode_n})")
 
 
 def run_elapsed_pibt(gmap, starts, goals, max_steps=400, stall_limit=None, rng=None):

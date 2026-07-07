@@ -33,6 +33,7 @@ import torch.nn.functional as F
 
 from ..envs.simulator import Simulator, oracle_kwargs
 from ..priority.features import build_features
+from ..priority.model_embedding import occ_history_window
 from .reward import DEFAULT_STEP_WEIGHTS
 
 
@@ -89,16 +90,20 @@ def _rollout(model, critic, gmap, starts, goals, *, sigma, weights, max_steps,
 
     feats = torch.from_numpy(build_features(gmap, goals))[None].to(device)
     emb = model.encode(feats)  # (1, D, H, W); reused every step -> trains encoder
+    history = model.config["history"]
 
-    logps, values = [], []
+    logps, values, occs = [], [], []
 
     def field_fn(positions):
         occ_np = np.zeros((H, W), np.float32)
         for (r, c) in positions:
             occ_np[r, c] = 1.0
+        occs.append(occ_np)
         occ = torch.from_numpy(occ_np)[None].to(device)
+        win = occ_history_window(occs, len(occs) - 1, history)
+        hist = torch.from_numpy(win)[None].to(device)
 
-        field = model.decode(emb, occ)[0]                      # (H, W), grad
+        field = model.decode(emb, occ, hist)[0]                # (H, W), grad
         rows = [r for (r, c) in positions]
         cols = [c for (r, c) in positions]
         mean = field[rows, cols]                               # (N,), grad
@@ -246,6 +251,7 @@ def collect_episode(model, critic, gmap, starts, goals, *, sigma, weights,
 
     feats = torch.from_numpy(build_features(gmap, goals))[None].to(device)
     emb = model.encode(feats)
+    history = model.config["history"]
 
     occs, cells, actions, old_logps, old_values = [], [], [], [], []
 
@@ -253,14 +259,16 @@ def collect_episode(model, critic, gmap, starts, goals, *, sigma, weights,
         occ_np = np.zeros((H, W), np.float32)
         for (r, c) in positions:
             occ_np[r, c] = 1.0
+        occs.append(occ_np)  # append first so the history window includes it
         occ = torch.from_numpy(occ_np)[None].to(device)
-        field = model.decode(emb, occ)[0]
+        win = occ_history_window(occs, len(occs) - 1, history)
+        hist = torch.from_numpy(win)[None].to(device)
+        field = model.decode(emb, occ, hist)[0]
         rows = [r for (r, c) in positions]
         cols = [c for (r, c) in positions]
         mean = field[rows, cols]
         eps = torch.from_numpy(rng.standard_normal(n).astype(np.float32)).to(device)
         action = mean + sigma * eps
-        occs.append(occ_np)
         cells.append(list(positions))
         a_np = action.cpu().numpy()
         actions.append(a_np)
@@ -355,9 +363,12 @@ def ppo_update(model, critic, opt, batch, *, sigma, clip=0.2, value_coef=0.5,
             feats = torch.from_numpy(build_features(b.gmap, b.goals))[None].to(device)
             emb = model.encode(feats)
             new_logps, new_values = [], []
+            history = model.config["history"]
             for t in range(T):
                 occ = torch.from_numpy(b.occs[t])[None].to(device)
-                field = model.decode(emb, occ)[0]
+                win = occ_history_window(b.occs, t, history)  # same window as rollout
+                hist = torch.from_numpy(win)[None].to(device)
+                field = model.decode(emb, occ, hist)[0]
                 rows = [r for (r, c) in b.cells[t]]
                 cols = [c for (r, c) in b.cells[t]]
                 mean = field[rows, cols]

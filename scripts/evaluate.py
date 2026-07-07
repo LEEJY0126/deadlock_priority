@@ -6,9 +6,10 @@ import torch
 from src.envs.simulator import ORACLES
 from src.eval.benchmark import (make_eval_maps, make_instances, evaluate,
                                 evaluate_embedding, evaluate_elapsed,
-                                baseline_provider, print_report)
+                                baseline_provider, print_report,
+                                print_inference_timing)
 from src.priority.model import build_model, load_model, predict_field
-from src.priority.model_embedding import EmbeddingPriorityModel
+from src.priority.model_embedding import EmbeddingPriorityModel, InferenceTimer
 
 
 def main():
@@ -43,18 +44,22 @@ def main():
         model = load_model(args.ckpt, device=args.device)
         name = f"Learned ({os.path.basename(args.ckpt)})"
         if isinstance(model, EmbeddingPriorityModel):
-            # dynamic, goal-conditioned field -> per-instance field_fn rollouts
+            # dynamic field -> per-instance field_fn rollouts; time enc/dec
+            timer = InferenceTimer()
             print_report(name, evaluate_embedding(model, inst, oracle=args.oracle,
-                                                  device=args.device))
+                                                  device=args.device, timer=timer))
+            print_inference_timing(name, timer)
         else:
             provider = lambda g: predict_field(model, g, device=args.device)
             print_report(name, evaluate(provider, inst, oracle=args.oracle))
     elif args.embedding:
         torch.manual_seed(0)  # reproducible untrained baseline
         model = build_model("embedding").to(args.device)
+        timer = InferenceTimer()
         print_report("Embedding (untrained)",
                      evaluate_embedding(model, inst, oracle=args.oracle,
-                                        device=args.device))
+                                        device=args.device, timer=timer))
+        print_inference_timing("Embedding (untrained)", timer)
 
 
 if __name__ == "__main__":

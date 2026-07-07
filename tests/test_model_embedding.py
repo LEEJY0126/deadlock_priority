@@ -18,6 +18,7 @@ from src.priority.model_embedding import (
     EmbeddingPriorityModel,
     agent_priorities,
     embedding_field_fn,
+    occ_history_window,
     predict_priority_field,
 )
 
@@ -36,6 +37,11 @@ def _occ(gmap, positions):
     return torch.from_numpy(occ)[None]
 
 
+def _hist(model, occ):
+    """[B, history, H, W] history tensor: the current frame repeated."""
+    return occ[:, None].repeat(1, model.config["history"], 1, 1)
+
+
 def test_build_model_dispatch():
     model = build_model("embedding", dim=32, enc_depth=1, dec_depth=1)
     assert isinstance(model, EmbeddingPriorityModel)
@@ -50,7 +56,8 @@ def test_encode_decode_shapes_and_positivity():
     emb = model.encode(x)
     assert emb.shape == (1, 32, gmap.H, gmap.W)
 
-    field = model.decode(emb, _occ(gmap, starts))
+    occ = _occ(gmap, starts)
+    field = model.decode(emb, occ, _hist(model, occ))
     assert field.shape == (1, gmap.H, gmap.W)
     assert bool((field >= 0).all()), "softplus output must be non-negative"
 
@@ -65,8 +72,9 @@ def test_encoder_is_map_only_decoder_is_dynamic():
     x = torch.from_numpy(build_features(gmap, goals))[None]
     emb = model.encode(x)
 
-    field_a = model.decode(emb, _occ(gmap, starts))
-    field_b = model.decode(emb, _occ(gmap, goals))  # different occupancy
+    occ_a, occ_b = _occ(gmap, starts), _occ(gmap, goals)
+    field_a = model.decode(emb, occ_a, _hist(model, occ_a))
+    field_b = model.decode(emb, occ_b, _hist(model, occ_b))  # different occupancy
     assert not torch.allclose(field_a, field_b), "field should react to occupancy"
 
     # encode takes no occupancy at all -> same map always yields the same embedding
@@ -80,8 +88,9 @@ def test_agent_priorities_indexes_field():
     model = build_model("embedding", dim=32, enc_depth=1, dec_depth=1).eval()
 
     x = torch.from_numpy(build_features(gmap, goals))[None]
+    occ = _occ(gmap, starts)
     with torch.no_grad():
-        field = model.decode(model.encode(x), _occ(gmap, starts))[0]
+        field = model.decode(model.encode(x), occ, _hist(model, occ))[0]
 
     rho = agent_priorities(field, starts)
     assert rho.shape == (len(starts),)
@@ -111,7 +120,8 @@ def test_backward_reaches_both_modules():
     model = build_model("embedding", dim=32, enc_depth=1, dec_depth=1)
 
     x = torch.from_numpy(build_features(gmap, goals))[None]
-    field = model(x, _occ(gmap, starts))
+    occ = _occ(gmap, starts)
+    field = model(x, occ, _hist(model, occ))
     field.mean().backward()
 
     enc_grad = any(p.grad is not None for p in model.map_encoder.parameters())
@@ -139,8 +149,40 @@ def test_size_agnostic_and_batched():
     x = torch.from_numpy(np.stack(feats))
     occ = torch.from_numpy(np.stack(occs))
 
-    field = model.decode(model.encode(x), occ)
+    field = model.decode(model.encode(x), occ, _hist(model, occ))
     assert field.shape == (2, 18, 22)
+
+
+def test_occ_history_window_pads_and_shapes():
+    occs = [np.full((3, 3), i, np.float32) for i in range(5)]
+    # early step: fewer than `history` frames -> front-padded with occs[0]
+    w = occ_history_window(occs, 1, history=4)
+    assert w.shape == (4, 3, 3)
+    assert w[0, 0, 0] == 0 and w[1, 0, 0] == 0  # padding = occs[0] (==0)
+    assert w[2, 0, 0] == 0 and w[3, 0, 0] == 1  # then occs[0], occs[1]
+    # later step: exact window occs[1..4]
+    w2 = occ_history_window(occs, 4, history=4)
+    assert [w2[k, 0, 0] for k in range(4)] == [1, 2, 3, 4]
+
+
+def test_decoder_uses_history():
+    """Same current occupancy but different *history* must change the field —
+    otherwise the new input is being ignored."""
+    torch.manual_seed(0)
+    gmap, starts, goals = _map_and_agents()
+    model = build_model("embedding", dim=32, enc_depth=1, dec_depth=1,
+                        history=4).eval()
+    x = torch.from_numpy(build_features(gmap, goals))[None]
+    emb = model.encode(x)
+    occ = _occ(gmap, starts)
+
+    hist_same = _hist(model, occ)                 # current frame repeated
+    hist_moved = occ.clone()[:, None].repeat(1, 4, 1, 1)
+    hist_moved[:, 0] = _occ(gmap, goals)[0]       # a different past frame
+    with torch.no_grad():
+        f_same = model.decode(emb, occ, hist_same)
+        f_moved = model.decode(emb, occ, hist_moved)
+    assert not torch.allclose(f_same, f_moved), "field should depend on history"
 
 
 def test_dynamic_run_is_collision_free_and_varies():

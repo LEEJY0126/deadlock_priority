@@ -39,10 +39,21 @@ embedding is identical for every agent — the comms-free invariant is preserved
 and it is meant to run **once per map**.
 
 **PriorityDecoder** (`model_embedding.py`). Embedding `[emb,H,W]` + live
-occupancy `[H,W]` (1 = an agent stands here) → priority **field** `[H,W]`.
-Occupancy is lifted with a small conv (a cell sees *nearby* agents), fused with
-the embedding, a shallow transformer, per-cell softplus head. Cheap; runs **per
-step**.
+occupancy `[H,W]` (1 = an agent stands here) + **occupancy history**
+`[history,H,W]` → priority **field** `[H,W]`. Occupancy is lifted with a small
+conv (a cell sees *nearby* agents); the history is encoded by a `HistoryEncoder`
+(conv stem over the `history` frames + shallow spatial transformer →
+`[hist_dim,H,W]`) and projected; both are fused with the embedding, then a
+shallow transformer + per-cell softplus head. Cheap; runs **per step**.
+
+The history gives the decoder *temporal* signal — motion direction and how long
+a cell has been occupied (stuck-time) — the very information `beta` hand-codes,
+now learnable. It is **stateful in the rollout**: `embedding_field_fn` keeps a
+per-episode occupancy buffer and `occ_history_window(occs, t, history)` builds
+the window ending at step `t`, front-padded with the start frame for early steps.
+The *same* window helper is used at PPO replay time (over the stored `occs`), so
+collection and update see identical inputs (verified: replay `|ratio-1| ~ 1e-7`).
+The critic stays occupancy-only — the value baseline does not need history.
 
 **Field-then-index.** Each agent reads its scalar priority by indexing the field
 at its own cell (`agent_priorities`). This was chosen over a raw `[N]` head: a
@@ -138,6 +149,7 @@ order in which the design settled and the fixes that mattered.
 | 9 | A2C didn't learn (flat / regressing) → **PPO + GAE**: `collect_episode`, `compute_gae`, `ppo_update`, `train_embedding_ppo_step`, σ-anneal | variance reduction (GAE + batched episodes) + a trust region (clipping) — the two things A2C lacked |
 | 10 | **observability fix:** run training with `python3 -u` / `flush=True` | buffered stdout hid every metric on the first PPO run — was flying blind |
 | 11 | **removed the goal-heatmap feature channel** (`N_CHANNELS` 5→4; free/clearance/row/col only) | test whether dynamic priority needs to see goals; the field is now purely structural. Breaking for 5-channel checkpoints. |
+| 12 | **occupancy-history input** to the decoder: `HistoryEncoder` (`[history,H,W]`→`[hist_dim,H,W]`) + stateful `occ_history_window`; threaded through field_fn / collect / replay | give the decoder temporal signal (motion, stuck-time) that a single snapshot lacks — the info `beta` hand-codes, now learnable. Replay reuses the same window (`\|ratio-1\|~1e-7`). |
 
 ## 5. Results
 
