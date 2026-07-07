@@ -119,7 +119,8 @@ stdout hid all metrics on the first attempt.
 
 ## 4. Implementation history (this session)
 
-Uncommitted; the order in which the design settled and the fixes that mattered.
+Committed as `581b7a8` on `feature/embedding`. The order in which the design
+settled and the fixes that mattered.
 
 | step | change | why |
 |------|--------|-----|
@@ -200,6 +201,9 @@ learnability — a real result needs training on fresh maps with held-out eval o
 
 ## 7. Reproduce
 
+Full flag reference for the branch's scripts + checkpoint/reward-YAML formats:
+[`embedding-scripts_usage.md`](embedding-scripts_usage.md).
+
 ```bash
 # tests
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/test_model_embedding.py tests/test_rl_embedding.py -q
@@ -207,7 +211,8 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest tests/test_model_embedding.py
 # untrained embedding vs MST vs PIBT
 python3 scripts/evaluate.py --embedding --n_per_kind 6 --n_inst 4
 
-# train (per-step A2C); saves runs/rl_embedding.pt, auto-routed by evaluate.py
-python3 scripts/train_embedding_rl.py --iters 2000 --device cuda
-python3 scripts/evaluate.py --ckpt runs/rl_embedding.pt --n_per_kind 12 --n_inst 5
+# train (PPO+GAE by default); saves runs/rl_embedding.pt + runs/rl_embedding_best.pt,
+# auto-routed by evaluate.py. Use `python3 -u` so the log flushes live.
+python3 -u scripts/train_embedding_rl.py --iters 600 --device cuda > runs/train_embedding.log 2>&1 &
+python3 scripts/evaluate.py --ckpt runs/rl_embedding_best.pt --n_per_kind 12 --n_inst 5
 ```
