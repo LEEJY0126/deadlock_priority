@@ -8,7 +8,7 @@ policy against MST. Saves a checkpoint loadable by ``src.priority.model.load_mod
 (arch="embedding"), so ``scripts/evaluate.py --ckpt ...`` picks it up
 automatically. (``--algo a2c`` falls back to the single-episode A2C step.)
 """
-import sys, os, argparse
+import sys, os, argparse, shlex
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
@@ -77,6 +77,12 @@ def main():
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
+
+    # Echo the exact launch command to the log for reproducibility. sys.orig_argv
+    # preserves the interpreter and its flags (e.g. -u), so a copy-paste reruns
+    # the same training. (Falls back to sys.argv on Python < 3.10.)
+    _argv = getattr(sys, "orig_argv", None) or ([sys.executable] + sys.argv)
+    print(f"command: {shlex.join(_argv)}", flush=True)
 
     if args.target_kl <= 0:
         args.target_kl = None  # disable the early-stop guard
