@@ -62,11 +62,16 @@ def build_model(arch="unet", no_pool=False, **config):
     """Construct a fresh priority model by architecture name.
 
     ``arch="unet"`` -> :class:`PriorityUNet` (honors ``no_pool``); ``"transformer"``
-    -> :class:`~.model_transformer.PriorityTransformer` (kwargs in ``config``).
+    -> :class:`~.model_transformer.PriorityTransformer` (kwargs in ``config``);
+    ``"embedding"`` -> :class:`~.model_embedding.EmbeddingPriorityModel`, the
+    dynamic MapEncoder + PriorityDecoder split (kwargs in ``config``).
     """
     if arch == "transformer":
         from .model_transformer import PriorityTransformer  # lazy: avoids cycle
         return PriorityTransformer(**config)
+    if arch == "embedding":
+        from .model_embedding import EmbeddingPriorityModel  # lazy: avoids cycle
+        return EmbeddingPriorityModel(**config)
     if arch == "unet":
         return PriorityUNet(pool=not no_pool)
     raise ValueError(f"unknown arch {arch!r}")

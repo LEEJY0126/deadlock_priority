@@ -300,16 +300,39 @@ class Simulator:
             temp_goal[i] = tg
             subgoal[i] = self._gll_dist(tg)
 
-    def run(self, priority_field: np.ndarray, rng=None) -> EpisodeResult:
+    def _normalize_field(self, raw: np.ndarray) -> np.ndarray:
         # Normalize the field to unit spread over free cells so the tie-break
         # (alpha) and stuck-boost (beta) act in comparable units regardless of
         # whether the field is the integer MST field or a learned softplus field.
         free = self.gmap.occ == 0
-        vals = priority_field[free]
+        vals = raw[free]
         std = vals.std() + 1e-6
-        self.field = (priority_field - vals.mean()) / std * free
+        return (raw - vals.mean()) / std * free
+
+    def run(self, priority_field: np.ndarray = None, rng=None,
+            field_fn=None) -> EpisodeResult:
+        """Drive PIBT with a priority field.
+
+        Static case: pass ``priority_field`` (H, W); it is normalized once and
+        reused every step (MST baseline or a static learned field).
+
+        Dynamic case: pass ``field_fn(positions) -> (H, W)`` instead. It is
+        called **exactly once per step** (at the top of the loop) with the
+        current agent cells and its output is re-normalized per step, so the
+        priority responds to the live configuration (the occupancy-conditioned
+        embedding model). Normalization is identical to the static case, so the
+        two are directly comparable. Calling it once per step (no separate
+        bootstrap call) keeps a stochastic RL policy's action/step counts aligned.
+        """
+        if field_fn is not None:
+            self.field = None  # computed inside the loop, once per step
+        else:
+            self.field = self._normalize_field(priority_field)
         pos = list(self.starts)
-        prev_base = np.array([self.field[p[0], p[1]] for p in pos], dtype=np.float64)
+        # prev_base (anti-oscillation reference) is bootstrapped from the first
+        # per-step field in the dynamic case; known up front in the static case.
+        prev_base = (None if field_fn is not None
+                     else np.array([self.field[p[0], p[1]] for p in pos], dtype=np.float64))
         arrival = [None] * self.n
         log = [list(pos)] if self.log_positions else []
 
@@ -331,6 +354,13 @@ class Simulator:
             self._gll_distcache = {}
 
         for t in range(1, self.max_steps + 1):
+            # Dynamic priority: recompute the field from the current occupancy
+            # before assembling priorities (embedding model). No-op when static.
+            if field_fn is not None:
+                self.field = self._normalize_field(field_fn(pos))
+                if prev_base is None:  # first step: reference is the field itself
+                    prev_base = np.array([self.field[p[0], p[1]] for p in pos],
+                                         dtype=np.float64)
             arrived = [pos[i] == self.goals[i] for i in range(self.n)]
             # oscillation: agent is back on the cell it held two steps ago, having
             # moved off it in between (the priority-swap livelock signature).
