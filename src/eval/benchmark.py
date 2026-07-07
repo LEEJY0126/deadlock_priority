@@ -85,10 +85,10 @@ def evaluate_embedding(model, instances, max_steps=400, oracle="paper",
     """Per-kind metrics for the dynamic embedding priority model.
 
     Unlike :func:`evaluate` (one static field per map), the embedding field is
-    goal-conditioned and recomputed each step from live occupancy, so a fresh
-    ``field_fn`` is built per (map, start/goal) instance and passed to
-    ``Simulator.run(field_fn=...)``. Same instances, metrics, and oracle as
-    :func:`evaluate`, so it is directly comparable to the MST/learned reports."""
+    recomputed each step from live occupancy, so a fresh ``field_fn`` is built
+    per (map, start/goal) instance and passed to ``Simulator.run(field_fn=...)``.
+    Same instances, metrics, and oracle as :func:`evaluate`, so it is directly
+    comparable to the MST/learned reports."""
     from ..priority.model_embedding import embedding_field_fn  # lazy: torch dep
     agg = _new_agg()
     for kind, g, sg in instances:

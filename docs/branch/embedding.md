@@ -29,8 +29,10 @@ assumption; would break under FOV, an explicit future concern).
 ## 2. Architecture (as implemented)
 
 **MapEncoder** (`src/priority/model_embedding.py`). Map features `[C,H,W]`
-(the existing `build_features`: free/clearance/goal-heatmap/coords) → shared
-embedding `[emb,H,W]`. Reuses the `model_transformer` trunk (conv stem +
+(the existing `build_features`, now 4 channels: free/clearance/row/col — the
+goal-heatmap channel was removed, so the field is purely structural and never
+sees goal positions) → shared embedding `[emb,H,W]`. Reuses the
+`model_transformer` trunk (conv stem +
 `sinusoidal_pe_2d` + `TransformerEncoder`) minus the scalar head, fusing the
 global-attended tokens with the local stem skip. **Map-only input**, so the
 embedding is identical for every agent — the comms-free invariant is preserved —
@@ -119,8 +121,9 @@ stdout hid all metrics on the first attempt.
 
 ## 4. Implementation history (this session)
 
-Committed as `581b7a8` on `feature/embedding`. The order in which the design
-settled and the fixes that mattered.
+Core committed as `581b7a8` (`bcd1374` added the sim script + docs) on
+`feature/embedding`; the goal-channel removal (step 11) is a later change. The
+order in which the design settled and the fixes that mattered.
 
 | step | change | why |
 |------|--------|-----|
@@ -134,8 +137,13 @@ settled and the fixes that mattered.
 | 8 | **fix:** critic uses a **detached** embedding | value loss ≫ policy loss was dominating the shared encoder |
 | 9 | A2C didn't learn (flat / regressing) → **PPO + GAE**: `collect_episode`, `compute_gae`, `ppo_update`, `train_embedding_ppo_step`, σ-anneal | variance reduction (GAE + batched episodes) + a trust region (clipping) — the two things A2C lacked |
 | 10 | **observability fix:** run training with `python3 -u` / `flush=True` | buffered stdout hid every metric on the first PPO run — was flying blind |
+| 11 | **removed the goal-heatmap feature channel** (`N_CHANNELS` 5→4; free/clearance/row/col only) | test whether dynamic priority needs to see goals; the field is now purely structural. Breaking for 5-channel checkpoints. |
 
 ## 5. Results
+
+> **The numbers below predate step 11 (goal-channel removal).** They were
+> measured with the 5-channel features (goal heatmap on). Re-run after retraining
+> on the 4-channel features to get current numbers.
 
 **Untrained embedding vs baselines** (n=24: n_per_kind=6 × n_inst=4, 8 agents,
 21×21, `paper`). Success rate:

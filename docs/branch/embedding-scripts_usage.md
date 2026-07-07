@@ -16,6 +16,12 @@ train_embedding_rl  →  evaluate --embedding / --ckpt <embedding ckpt>
 `--device` defaults to `cuda` when a GPU is available, otherwise `cpu`. Always
 launch training with `python -u` (unbuffered) so metrics flush live to the log.
 
+**Input features are structural only.** `build_features` produces **4 channels**
+(`N_CHANNELS=4`): free mask, clearance, row coord, col coord. The goal-heatmap
+channel was removed, so the priority field never sees goal positions — agents
+still reach their goals via the simulator's per-agent goal-distance fields. (This
+is a breaking change: 5-channel checkpoints from before the removal won't load.)
+
 ---
 
 ## `train_embedding_rl.py`
@@ -101,10 +107,10 @@ auto-routing behavior on this branch.
 
 **Auto-routing.** When `--ckpt` points at an `arch="embedding"` checkpoint,
 `evaluate.py` detects it (`isinstance(model, EmbeddingPriorityModel)`) and drives
-`benchmark.evaluate_embedding` — a fresh per-instance `field_fn` (the field is
-goal-conditioned and recomputed per step) instead of the static field-provider
-path. All other checkpoints and the MST/elapsed-PIBT baselines are unchanged, so
-the report is directly comparable across methods.
+`benchmark.evaluate_embedding` — a per-episode `field_fn` recomputed each step
+from live occupancy (a *dynamic* field, not one static field) instead of the
+static field-provider path. All other checkpoints and the MST/elapsed-PIBT
+baselines are unchanged, so the report is directly comparable across methods.
 
 ```bash
 # untrained embedding vs MST vs elapsed-PIBT (sanity baseline)
