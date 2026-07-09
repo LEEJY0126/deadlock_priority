@@ -86,10 +86,14 @@ python -u scripts/train_imitation_action.py --data data/imitation_action.npz \
     --epochs 100 --out runs/imitation_action.pt --device cuda
 ```
 
-> **Log line.** Per epoch: `train_loss`/`acc` and `val_loss`/`acc` (action-accuracy,
-> chance ≈ `1/5 = 20%`) plus `best_val_acc`. The checkpoint is saved on val-accuracy
-> improvement. Overfitting (train acc → 100%, val acc rolling over) means more
-> demonstrations are needed — raise `--n_maps`/`--n_inst` in generation.
+> **Progress + log.** A tqdm epoch bar (`IL`) carries live
+> `tr_loss`/`tr_acc`/`val_loss`/`val_acc`/`best` in its postfix, with an inner
+> per-epoch bar over training batches. A persistent line (via `tqdm.write`) is
+> printed every 5 epochs and on every val-accuracy improvement (marked `*`), so a
+> redirected log keeps a readable history. Action-accuracy chance is `1/5 = 20%`;
+> the checkpoint is saved whenever `val_acc` improves. Overfitting (train acc → 100%,
+> val acc rolling over) means more demonstrations are needed — raise
+> `--n_maps`/`--n_inst` in generation.
 
 > **Then warm-start RL:** `train_embedding_action_rl.py --init runs/imitation_action.pt`
 > loads these weights so PPO begins from a collision-avoiding policy.
