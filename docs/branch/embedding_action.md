@@ -145,32 +145,105 @@ python3 scripts/evaluate.py --action --n_per_kind 6 --n_inst 4        # untraine
 python3 scripts/evaluate.py --ckpt runs/rl_action_best.pt             # trained (auto-routed)
 ```
 
-## 7. Limitations / open work
+## 7. Imitation warm-start (behavioral cloning)
+
+Terminate-on-first-collision makes cold RL slow (§8), so the policy is first
+**pretrained to imitate a collision-free expert**: the trained *priority* model
+(`runs/rl_embedding_best.pt`) — or MST — driving PIBT. Because PIBT guarantees a
+legal joint move every step, **every transition of an expert rollout is a valid
+collision-free demonstration**, even in episodes the expert never fully solves.
+
+Pipeline (`src/train/imitation_action.py`, `scripts/gen_dataset_action.py`,
+`scripts/train_imitation_action.py`):
+
+1. **Generate.** Roll out the expert on fresh maps and cache each episode's
+   `(occupancy, position log)`. A sample is just the log — features are map-only, so
+   occupancy, the history window, the agent cells, and the labels all reconstruct
+   from it.
+2. **Label.** The per-agent displacement `pos[t+1] − pos[t]` maps to a discrete
+   action via the reverse of `ACTION_MOVES` (`action_from_delta`). PIBT only ever
+   steps to an adjacent cell or stays, so every label is one of the five actions.
+3. **Clone.** Train the `ActionDecoder` by **cross-entropy at the agent cells**
+   (`il_episode_loss`, the same field-then-index read as inference). The output is
+   an `arch="embedding_action"` checkpoint.
+
+That checkpoint drops into `evaluate.py --action` and, most usefully, **warm-starts
+RL**: `train_embedding_action_rl.py --init runs/imitation_action.pt`. In a smoke
+run, cloning collapsed the greedy collision rate from ≈100% (untrained) toward ≈0%
+— RL then starts from a collision-avoiding policy instead of a random one. See
+[`embedding_action-script_usage.md`](embedding_action-script_usage.md) for flags and
+the dataset format.
+
+## 8. Implementation history
+
+The branch was built in this order (each step kept the shared embedding trunk and
+the field-then-index contract intact):
+
+1. **Action head.** Forked `EmbeddingActionModel` from the priority model — same
+   `MapEncoder` / `HistoryEncoder`, but the decoder head emits 5 logits per cell
+   (`ActionDecoder`) instead of a scalar priority. Registered as
+   `arch="embedding_action"`, so `load_model` / `evaluate.py` route it
+   automatically.
+2. **Direct executor.** Added `src/envs/action_exec.py` to replace PIBT: apply the
+   joint move each step, detect wall / vertex / swap collisions (following allowed),
+   and terminate-on-collision. `run_action_episode` backs both eval (greedy) and RL
+   (sampling) via one `action_fn` interface. Arrived agents stay collidable.
+3. **Reward + RL.** Extended `StepRewardWeights` with a terminal `collision`
+   penalty (−5.0, mirrors success). Wrote `rl_action.py`: categorical PPO+GAE
+   reusing the priority path's `Critic` and `occ_history_window`, with a
+   `Categorical` policy and an entropy bonus replacing the Gaussian `sigma`. A small
+   fix rode along here: the priority decoder's `hist_proj` now outputs `hist_dim`
+   channels (was `occ_dim`), so the full history embedding reaches the fusion.
+4. **Own branch + docs.** Split the variant onto `feature/embedding_action` with
+   dedicated design/scripts docs; trimmed the priority docs to pointers so each
+   variant has a single source of truth.
+5. **Imitation warm-start (§7).** Added the BC pipeline
+   (`imitation_action.py`, `gen_dataset_action.py`, `train_imitation_action.py`) to
+   fix the cold-start gap: the priority model driving PIBT is a collision-free
+   expert, so its rollouts are clean per-step action labels. Verified end-to-end —
+   val action-accuracy ≈77% (chance 20%) on a small dataset, and the greedy
+   collision rate collapsed from ≈100% to ≈0% before any RL.
+
+Throughout: unit tests accompanied each stage (`test_model_action`,
+`test_action_exec`, `test_rl_action`, `test_imitation_action`), and every training
+script echoes its launch command and CUDA-synced encoder/decoder latency.
+
+## 9. Limitations / open work
 
 - **Harder RL problem.** Terminate-on-first-collision makes early episodes very
   short (a random policy collides almost immediately), so credit is sparse. This is
-  fundamentally harder than the priority path, where PIBT guaranteed liveness.
-  Curriculum knobs: `--n_agents`, `--size`, `--entropy_coef`.
-- **Convergence run outstanding.** The pipeline (model, executor, RL, eval, tests)
-  is wired and smoke-tested end-to-end; a real training run on fresh maps with
-  held-out eval is the open item — same status as the priority path.
+  fundamentally harder than the priority path, where PIBT guaranteed liveness — the
+  imitation warm-start (§7) is the main mitigation; curriculum knobs `--n_agents`,
+  `--size`, `--entropy_coef` are the rest.
+- **Convergence run outstanding.** The pipeline (IL + RL, executor, eval, tests) is
+  wired and smoke-tested end-to-end; a real training run on fresh maps with held-out
+  eval — ideally IL-pretrain → RL-finetune — is the open item.
+- **Behavioral cloning only.** IL is offline BC on expert states; it can drift on
+  states the expert never visits. On-policy correction (DAgger) is future work — for
+  now RL finetuning covers the distribution shift.
 - **Global-observation only.** Like the priority variant, comms-free holds only if
   all agents share the same occupancy; a limited FOV would break it.
-- **No imitation warm-start.** RL starts cold; there is no per-frame action oracle.
 
-## 8. Reproduce
+## 10. Reproduce
 
 ```bash
-# tests (model shapes, collision detection, RL mechanics)
-python3 -m pytest tests/test_model_action.py tests/test_action_exec.py tests/test_rl_action.py -q
+# tests (model shapes, collision detection, RL + IL mechanics)
+python3 -m pytest tests/test_model_action.py tests/test_action_exec.py \
+    tests/test_rl_action.py tests/test_imitation_action.py -q
 
 # untrained action policy vs MST (collision rate reported alongside success)
 python3 scripts/evaluate.py --action --n_per_kind 6 --n_inst 4
 
-# train (PPO+GAE); saves runs/rl_action.pt + runs/rl_action_best.pt, auto-routed by
-# evaluate.py. Use `python3 -u` so the log flushes live; nohup so it survives logout.
+# imitation warm-start: expert demos -> behavioral cloning -> loadable ckpt
+python3 -u scripts/gen_dataset_action.py --expert runs/rl_embedding_best.pt \
+    --n_maps 120 --n_agents 8 --size 21 --out data/imitation_action.npz
+python3 -u scripts/train_imitation_action.py --data data/imitation_action.npz \
+    --epochs 100 --out runs/imitation_action.pt --device cuda
+
+# RL, warm-started from the IL checkpoint (drop --init for cold start). Saves
+# runs/rl_action.pt + runs/rl_action_best.pt; use nohup so it survives logout.
 nohup python3 -u scripts/train_embedding_action_rl.py --device cuda --iters 600 \
-    --size 21 --n_agents 8 --entropy_coef 0.01 \
+    --init runs/imitation_action.pt --size 21 --n_agents 8 --entropy_coef 0.01 \
     --out runs/rl_action.pt > runs/train_action.log 2>&1 &
 python3 scripts/evaluate.py --ckpt runs/rl_action_best.pt --n_per_kind 12 --n_inst 5
 ```

@@ -5,12 +5,18 @@ main [`docs/scripts_usage.md`](../scripts_usage.md). Only what is new or differe
 for the **dynamic action-map policy** is documented here; shared pieces (metrics,
 the MST baseline, the elapsed-PIBT baseline) are unchanged — see the main doc.
 
-The action pipeline is RL-only (there is no per-frame action oracle, so no
-imitation stage):
+The action pipeline has an **imitation warm-start** (behavioral cloning from a
+collision-free expert) feeding **RL finetuning**:
 
 ```
-train_embedding_action_rl  →  evaluate --action / --ckpt <embedding_action ckpt>
+gen_dataset_action  →  train_imitation_action  →  train_embedding_action_rl --init
+                                              ↘  evaluate --action / --ckpt <ckpt>
 ```
+
+The IL stage is optional (RL runs cold without `--init`) but strongly recommended —
+it collapses the greedy collision rate before RL starts. All stages share the
+`arch="embedding_action"` checkpoint format, so an IL checkpoint is a valid
+`--init` for RL and a valid `--ckpt` for `evaluate.py`.
 
 `--device` defaults to `cuda` when a GPU is available, otherwise `cpu`. Always
 launch training with `python -u` (unbuffered) so metrics flush live to the log.
@@ -20,6 +26,73 @@ launch training with `python -u` (unbuffered) so metrics flush live to the log.
 The policy never sees goal positions in the field; agents reach goals via the
 progress reward. The **output** is the difference: a `[5, H, W]` action-logit map
 over `[UP, DOWN, LEFT, RIGHT, STAY]`, read per agent at its own cell.
+
+---
+
+## `gen_dataset_action.py`
+
+Generate imitation demonstrations by rolling out a **collision-free expert** — the
+trained priority model (default `runs/rl_embedding_best.pt`) or MST — driving PIBT
+on fresh random maps, caching each episode's `(occupancy, position log)`. Because
+PIBT guarantees a legal joint move every step, every transition is a valid
+collision-free demonstration; per-step action labels are reconstructed from the log
+at train time.
+
+| Argument | Type | Default | Description |
+| --- | --- | --- | --- |
+| `--out` | str | `data/imitation_action.npz` | Output dataset path |
+| `--expert` | str | `runs/rl_embedding_best.pt` | Priority checkpoint driving PIBT (any arch); `''`/`mst` uses the MST field |
+| `--n_maps` | int | `120` | Random maps (forest/wide/narrow round-robin) |
+| `--n_inst` | int | `4` | Start/goal instances per map (each = one episode) |
+| `--size` | int | `21` | Grid side length |
+| `--n_agents` | int | `8` | Agents per episode |
+| `--max_steps` | int | `256` | Expert episode step cap |
+| `--oracle` | str | `paper` | PIBT resolution for the expert rollouts |
+| `--seed` | int | `0` | RNG seed |
+| `--device` | str | `cuda`/`cpu` | Compute device (for a learned expert) |
+
+```bash
+python -u scripts/gen_dataset_action.py --expert runs/rl_embedding_best.pt \
+    --n_maps 120 --n_inst 4 --n_agents 8 --size 21 --out data/imitation_action.npz
+```
+
+Prints the episode/transition counts and echoes the full generation config. Episodes
+with no transitions (all agents already on goal) are skipped.
+
+---
+
+## `train_imitation_action.py`
+
+Behavioral cloning: train an `EmbeddingActionModel` to reproduce the expert's moves
+by **cross-entropy over `[UP, DOWN, LEFT, RIGHT, STAY]` at each agent cell**, every
+step of every episode. Saves an `arch="embedding_action"` checkpoint (best by
+validation **action-accuracy**) that `evaluate.py` auto-routes and that warm-starts
+RL via `train_embedding_action_rl.py --init`.
+
+| Argument | Type | Default | Description |
+| --- | --- | --- | --- |
+| `--data` | str | `data/imitation_action.npz` | Dataset from `gen_dataset_action.py` |
+| `--out` | str | `runs/imitation_action.pt` | Best-val checkpoint path |
+| `--epochs` | int | `100` | Training epochs |
+| `--bs` | int | `8` | Episodes per optimizer step |
+| `--lr` | float | `3e-4` | Adam learning rate |
+| `--dim` / `--enc_depth` / `--dec_depth` | int | `128` / `4` / `2` | Model trunk sizes (`build_model("embedding_action", …)`) |
+| `--history` / `--hist_dim` / `--hist_depth` | int | `8` / `64` / `2` | Occupancy-history encoder; `--history` is a model hyperparam (the window is rebuilt from the stored log, so any value is valid) |
+| `--seed` | int | `0` | RNG seed (split + shuffle) |
+| `--device` | str | `cuda`/`cpu` | Compute device |
+
+```bash
+python -u scripts/train_imitation_action.py --data data/imitation_action.npz \
+    --epochs 100 --out runs/imitation_action.pt --device cuda
+```
+
+> **Log line.** Per epoch: `train_loss`/`acc` and `val_loss`/`acc` (action-accuracy,
+> chance ≈ `1/5 = 20%`) plus `best_val_acc`. The checkpoint is saved on val-accuracy
+> improvement. Overfitting (train acc → 100%, val acc rolling over) means more
+> demonstrations are needed — raise `--n_maps`/`--n_inst` in generation.
+
+> **Then warm-start RL:** `train_embedding_action_rl.py --init runs/imitation_action.pt`
+> loads these weights so PPO begins from a collision-avoiding policy.
 
 ---
 
@@ -156,7 +229,24 @@ policy-invariant (Ng et al. 1999).
 
 ## Data Formats
 
-### Action checkpoint (`runs/rl_action*.pt`)
+### Imitation dataset (`data/imitation_action.npz`)
+
+Written by `gen_dataset_action.py`, read by `train_imitation_action.py`
+(`np.load(..., allow_pickle=True)`). One entry per expert episode:
+
+| key | type | meaning |
+| --- | --- | --- |
+| `occ` | `uint8 [E,H,W]` | Obstacle grid per episode (1 = wall) — rebuilds `build_features` |
+| `positions` | `object [E]` | Per-episode position log: `list[list[(r,c)]]`, one config per step (start first) |
+| `kind` | `str [E]` | Map kind (`forest`/`wide`/`narrow`) |
+| `meta` | `str` | JSON of the full generation config (expert path, sizes, oracle, seed…) |
+
+Action labels are **not** stored — they are reconstructed at train time from the
+displacement between consecutive log entries (`actions_from_log`), and occupancy /
+the history window / the agent cells likewise come from the log (features are
+map-only, so no goals are needed). Compact and exact.
+
+### Action checkpoint (`runs/rl_action*.pt`, `runs/imitation_action.pt`)
 
 Same loader as the other archs (`src.priority.model.load_model` →
 `build_model("embedding_action", **config)`), with an extra `critic` key:
@@ -169,6 +259,9 @@ Same loader as the other archs (`src.priority.model.load_model` →
 | `config` | `dict` | Constructor kwargs: `dim`, `enc_depth`, `dec_depth`, `heads`, `mlp_ratio`, `dropout`, `occ_dim`, `cin`, `history`, `hist_dim`, `hist_depth`, **`n_actions`** (5) |
 
 `load_model` reads `arch` and rebuilds the matching model automatically; the
-`critic` key is ignored by eval and only needed to resume training. Eval drives the
-model through `benchmark.evaluate_action` (greedy direct-move rollouts, no
-field/PIBT) rather than `predict_field`.
+`critic` key is ignored by eval and only needed to resume training. The IL
+checkpoint (`imitation_action.pt`) has the same `arch`/`model`/`config` but **no
+`critic`** (BC has no value head) — it loads identically for eval and as an RL
+`--init` (RL builds a fresh critic). Eval drives the model through
+`benchmark.evaluate_action` (greedy direct-move rollouts, no field/PIBT) rather than
+`predict_field`.
