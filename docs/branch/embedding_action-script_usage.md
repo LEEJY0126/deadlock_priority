@@ -175,6 +175,19 @@ python scripts/evaluate.py --ckpt runs/rl_action_best.pt --n_per_kind 12 --n_ins
 > `coll`↓ and `succ`↑ while `ent` decays from ≈`ln 5 ≈ 1.61`. Rising `clip`/`kl`
 > late → lower `--lr`, fewer `--epochs`, or a tighter `--target_kl`.
 
+> **Vectorized training (default).** A PPO step is GPU-batched end to end
+> (`src/train/rl_action.py`): collection steps all `--batch_episodes` environments
+> in lockstep with one decode per timestep, and the PPO update batches each
+> episode's `T` timesteps into a **single** grad decode (reusing per-episode replay
+> tensors across epochs). The update is the dominant cost and this is where the win
+> is — ~12× on the replay at `T=100` (≈18 s → 1.5 s, B=8). The speedup grows with
+> episode length, so it matters most once the policy (e.g. IL-warm-started) runs
+> full-length episodes; early training collides almost immediately (tiny `T`) and is
+> cheap either way. Peak decoder memory scales with `T` (≈1.8 GB at `T=100`, size 21,
+> 16 agents; ≈4.5 GB at the `--max_steps 256` cap) — lower `--max_steps` or
+> `--batch_episodes` if you OOM. `train_action_ppo_step(..., vectorized=False)` is a
+> per-episode reference path kept for debugging.
+
 ---
 
 ## `evaluate.py` (action additions)
