@@ -1,0 +1,93 @@
+command: python -u scripts/train_embedding_rl.py --out runs/rl_embedding.pt --iters 200 --batch_episodes 8 --size 21 --n_agents 16 --eval_every 10 --history 12 --eval_maps_per_kind 33 --log_every 1 --device cuda
+[    1] sigma=0.50 reward=+6.006 succ= 100% reached= 100% pi_loss=+0.313 v_loss=5.78 kl=+18.017 clip=0.87 ep=1/4
+[    2] sigma=0.50 reward=+5.997 succ= 100% reached= 100% pi_loss=-0.053 v_loss=1.88 kl=+0.119 clip=0.52 ep=1/4
+[    3] sigma=0.50 reward=+4.248 succ=  75% reached=  95% pi_loss=-0.743 v_loss=0.68 kl=+0.024 clip=0.31 ep=2/4
+[    4] sigma=0.49 reward=+5.993 succ= 100% reached= 100% pi_loss=-0.060 v_loss=0.54 kl=+0.037 clip=0.25 ep=1/4
+[    5] sigma=0.49 reward=+5.135 succ=  88% reached=  98% pi_loss=-0.447 v_loss=0.40 kl=+0.055 clip=0.50 ep=1/4
+[    6] sigma=0.49 reward=+4.289 succ=  75% reached=  98% pi_loss=-0.574 v_loss=0.45 kl=+0.018 clip=0.30 ep=4/4
+[    7] sigma=0.49 reward=+5.897 succ= 100% reached= 100% pi_loss=-0.157 v_loss=0.41 kl=+0.002 clip=0.27 ep=2/4
+[    8] sigma=0.49 reward=+5.976 succ= 100% reached= 100% pi_loss=-0.174 v_loss=0.42 kl=+0.027 clip=0.25 ep=2/4
+[    9] sigma=0.48 reward=+5.855 succ= 100% reached= 100% pi_loss=-0.310 v_loss=0.39 kl=-0.013 clip=0.23 ep=2/4
+[   10] sigma=0.48 reward=+5.992 succ= 100% reached= 100% pi_loss=-0.056 v_loss=0.35 kl=+0.023 clip=0.25 ep=1/4
+== MST baseline @10 ==
+  forest       success= 75.8%  makespan=  32.1  flowtime=  267.5  (n=99)
+  wide         success= 67.7%  makespan=  35.7  flowtime=  289.0  (n=99)
+  narrow       success= 23.2%  makespan=  42.9  flowtime=  367.7  (n=99)
+== Embedding @10 ==
+  forest       success= 79.8%  makespan=  30.9  flowtime=  262.3  (n=99)
+  wide         success= 69.7%  makespan=  33.4  flowtime=  276.8  (n=99)
+  narrow       success= 27.3%  makespan=  47.6  flowtime=  368.6  (n=99)
+  Embedding @10 latency: encoder   1.14 ms/map (n=297), decoder  1.540 ms/step (n=31757)
+  new best embedding success=58.9% -> runs/rl_embedding_best.pt
+[   11] sigma=0.48 reward=+5.901 succ= 100% reached= 100% pi_loss=-0.218 v_loss=0.35 kl=+0.030 clip=0.28 ep=1/4
+[   12] sigma=0.48 reward=+6.059 succ= 100% reached= 100% pi_loss=-0.025 v_loss=0.30 kl=+0.027 clip=0.24 ep=2/4
+[   13] sigma=0.48 reward=+5.982 succ= 100% reached= 100% pi_loss=-0.085 v_loss=0.31 kl=+0.042 clip=0.24 ep=1/4
+[   14] sigma=0.47 reward=+5.135 succ=  88% reached=  98% pi_loss=-0.438 v_loss=0.39 kl=+0.047 clip=0.49 ep=1/4
+[   15] sigma=0.47 reward=+5.144 succ=  88% reached=  97% pi_loss=-0.592 v_loss=0.41 kl=+0.064 clip=0.43 ep=1/4
+[   16] sigma=0.47 reward=+6.044 succ= 100% reached= 100% pi_loss=-0.029 v_loss=0.32 kl=+0.055 clip=0.34 ep=2/4
+[   17] sigma=0.47 reward=+5.161 succ=  88% reached=  98% pi_loss=-0.429 v_loss=0.35 kl=+0.019 clip=0.40 ep=2/4
+[   18] sigma=0.47 reward=+6.025 succ= 100% reached= 100% pi_loss=+0.048 v_loss=0.29 kl=+0.180 clip=0.51 ep=1/4
+[   19] sigma=0.46 reward=+6.018 succ= 100% reached= 100% pi_loss=+0.020 v_loss=0.23 kl=+0.058 clip=0.41 ep=2/4
+[   20] sigma=0.46 reward=+5.092 succ=  88% reached=  96% pi_loss=-0.524 v_loss=0.33 kl=+0.044 clip=0.29 ep=1/4
+== MST baseline @20 ==
+  forest       success= 75.8%  makespan=  32.1  flowtime=  267.5  (n=99)
+  wide         success= 67.7%  makespan=  35.7  flowtime=  289.0  (n=99)
+  narrow       success= 23.2%  makespan=  42.9  flowtime=  367.7  (n=99)
+== Embedding @20 ==
+  forest       success= 91.9%  makespan=  31.9  flowtime=  266.4  (n=99)
+  wide         success= 83.8%  makespan=  34.4  flowtime=  286.9  (n=99)
+  narrow       success= 41.4%  makespan=  48.4  flowtime=  380.5  (n=99)
+  Embedding @20 latency: encoder   1.09 ms/map (n=297), decoder  1.495 ms/step (n=25495)
+  new best embedding success=72.4% -> runs/rl_embedding_best.pt
+[   21] sigma=0.46 reward=+5.983 succ= 100% reached= 100% pi_loss=-0.062 v_loss=0.28 kl=+0.030 clip=0.31 ep=1/4
+[   22] sigma=0.46 reward=+6.014 succ= 100% reached= 100% pi_loss=-0.064 v_loss=0.28 kl=+0.030 clip=0.36 ep=2/4
+[   23] sigma=0.46 reward=+6.020 succ= 100% reached= 100% pi_loss=-0.079 v_loss=0.28 kl=+0.098 clip=0.48 ep=1/4
+[   24] sigma=0.45 reward=+5.205 succ=  88% reached=  98% pi_loss=-0.494 v_loss=0.32 kl=+0.011 clip=0.21 ep=1/4
+[   25] sigma=0.45 reward=+6.019 succ= 100% reached= 100% pi_loss=-0.124 v_loss=0.31 kl=+0.013 clip=0.16 ep=2/4
+[   26] sigma=0.45 reward=+6.005 succ= 100% reached= 100% pi_loss=+0.011 v_loss=0.24 kl=+0.049 clip=0.37 ep=1/4
+[   27] sigma=0.45 reward=+6.006 succ= 100% reached= 100% pi_loss=+0.010 v_loss=0.26 kl=+0.118 clip=0.53 ep=1/4
+[   28] sigma=0.45 reward=+5.124 succ=  88% reached=  98% pi_loss=-0.548 v_loss=0.42 kl=-0.017 clip=0.27 ep=3/4
+[   29] sigma=0.44 reward=+5.160 succ=  88% reached=  98% pi_loss=-0.448 v_loss=0.32 kl=+0.042 clip=0.36 ep=1/4
+[   30] sigma=0.44 reward=+6.007 succ= 100% reached= 100% pi_loss=-0.086 v_loss=0.29 kl=+0.115 clip=0.51 ep=2/4
+== MST baseline @30 ==
+  forest       success= 75.8%  makespan=  32.1  flowtime=  267.5  (n=99)
+  wide         success= 67.7%  makespan=  35.7  flowtime=  289.0  (n=99)
+  narrow       success= 23.2%  makespan=  42.9  flowtime=  367.7  (n=99)
+== Embedding @30 ==
+  forest       success= 92.9%  makespan=  30.7  flowtime=  262.0  (n=99)
+  wide         success= 72.7%  makespan=  33.9  flowtime=  280.2  (n=99)
+  narrow       success= 39.4%  makespan=  45.4  flowtime=  365.7  (n=99)
+  Embedding @30 latency: encoder   1.14 ms/map (n=297), decoder  1.545 ms/step (n=26539)
+[   31] sigma=0.44 reward=+5.042 succ=  88% reached=  99% pi_loss=-0.482 v_loss=0.34 kl=+0.002 clip=0.24 ep=2/4
+[   32] sigma=0.44 reward=+5.144 succ=  88% reached=  99% pi_loss=-0.495 v_loss=0.39 kl=+0.013 clip=0.29 ep=2/4
+[   33] sigma=0.44 reward=+6.026 succ= 100% reached= 100% pi_loss=-0.041 v_loss=0.27 kl=+0.088 clip=0.39 ep=1/4
+[   34] sigma=0.43 reward=+5.123 succ=  88% reached=  99% pi_loss=-0.505 v_loss=0.29 kl=+0.038 clip=0.23 ep=1/4
+[   35] sigma=0.43 reward=+5.158 succ=  88% reached=  98% pi_loss=-0.654 v_loss=0.43 kl=-0.002 clip=0.21 ep=2/4
+[   36] sigma=0.43 reward=+5.946 succ= 100% reached= 100% pi_loss=-0.175 v_loss=0.31 kl=+0.092 clip=0.48 ep=2/4
+[   37] sigma=0.43 reward=+5.103 succ=  88% reached=  98% pi_loss=-0.431 v_loss=0.31 kl=+0.043 clip=0.42 ep=2/4
+[   38] sigma=0.43 reward=+6.061 succ= 100% reached= 100% pi_loss=+0.090 v_loss=0.20 kl=+0.167 clip=0.58 ep=1/4
+[   39] sigma=0.42 reward=+5.093 succ=  88% reached=  98% pi_loss=-0.571 v_loss=0.32 kl=+0.042 clip=0.32 ep=1/4
+[   40] sigma=0.42 reward=+5.044 succ=  88% reached=  99% pi_loss=-0.613 v_loss=0.45 kl=+0.012 clip=0.29 ep=2/4
+== MST baseline @40 ==
+  forest       success= 75.8%  makespan=  32.1  flowtime=  267.5  (n=99)
+  wide         success= 67.7%  makespan=  35.7  flowtime=  289.0  (n=99)
+  narrow       success= 23.2%  makespan=  42.9  flowtime=  367.7  (n=99)
+== Embedding @40 ==
+  forest       success= 86.9%  makespan=  30.3  flowtime=  261.4  (n=99)
+  wide         success= 63.6%  makespan=  32.2  flowtime=  275.6  (n=99)
+  narrow       success= 25.3%  makespan=  42.7  flowtime=  355.7  (n=99)
+  Embedding @40 latency: encoder   1.17 ms/map (n=297), decoder  1.555 ms/step (n=31431)
+[   41] sigma=0.42 reward=+6.029 succ= 100% reached= 100% pi_loss=-0.061 v_loss=0.35 kl=+0.017 clip=0.16 ep=2/4
+[   42] sigma=0.42 reward=+5.998 succ= 100% reached= 100% pi_loss=-0.015 v_loss=0.34 kl=+0.151 clip=0.50 ep=1/4
+[   43] sigma=0.42 reward=+5.142 succ=  88% reached=  99% pi_loss=-0.525 v_loss=0.35 kl=+0.006 clip=0.28 ep=2/4
+[   44] sigma=0.41 reward=+5.119 succ=  88% reached=  99% pi_loss=-0.612 v_loss=0.39 kl=-0.001 clip=0.23 ep=3/4
+[   45] sigma=0.41 reward=+5.973 succ= 100% reached= 100% pi_loss=-0.085 v_loss=0.41 kl=+0.061 clip=0.45 ep=1/4
+[   46] sigma=0.41 reward=+5.992 succ= 100% reached= 100% pi_loss=-0.130 v_loss=0.34 kl=+0.033 clip=0.26 ep=1/4
+[   47] sigma=0.41 reward=+5.173 succ=  88% reached=  98% pi_loss=-0.599 v_loss=0.34 kl=+0.001 clip=0.18 ep=2/4
+[   48] sigma=0.41 reward=+5.994 succ= 100% reached= 100% pi_loss=-0.102 v_loss=0.27 kl=+0.028 clip=0.24 ep=1/4
+[   49] sigma=0.40 reward=+5.107 succ=  88% reached=  99% pi_loss=-0.457 v_loss=0.42 kl=+0.013 clip=0.23 ep=1/4
+[   50] sigma=0.40 reward=+5.989 succ= 100% reached= 100% pi_loss=-0.048 v_loss=0.40 kl=+0.018 clip=0.17 ep=2/4
+== MST baseline @50 ==
+  forest       success= 75.8%  makespan=  32.1  flowtime=  267.5  (n=99)
+  wide         success= 67.7%  makespan=  35.7  flowtime=  289.0  (n=99)
+  narrow       success= 23.2%  makespan=  42.9  flowtime=  367.7  (n=99)

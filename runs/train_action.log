@@ -1,0 +1,25 @@
+command: python -u scripts/train_embedding_action_rl.py --init runs/imitation_action.pt --out runs/rl_action.pt --iters 10000 --reward_weights reward_weight.yaml --lr 1e-4 --size 21 --n_agents 16 --history 12 --eval_every 100 --eval_maps_per_kind 10 --log_every 10 --device cuda
+[   10] reward=-5.023 succ=   0% reached=   0% coll= 100% pi_loss=+1.252 v_loss=3.04 ent=0.657 kl=-0.363 clip=0.53 ep=1/4
+[   20] reward=-5.024 succ=   0% reached=   0% coll= 100% pi_loss=+0.592 v_loss=0.01 ent=0.768 kl=+0.036 clip=0.35 ep=1/4
+[   30] reward=-5.032 succ=   0% reached=   0% coll= 100% pi_loss=+0.585 v_loss=0.02 ent=0.501 kl=+0.151 clip=0.48 ep=1/4
+[   40] reward=-5.030 succ=   0% reached=   0% coll= 100% pi_loss=+0.582 v_loss=0.01 ent=0.663 kl=+0.012 clip=0.65 ep=1/4
+[   50] reward=-5.024 succ=   0% reached=   0% coll= 100% pi_loss=+0.963 v_loss=0.02 ent=0.601 kl=-0.159 clip=0.73 ep=1/4
+[   60] reward=-5.027 succ=   0% reached=   0% coll= 100% pi_loss=+0.540 v_loss=0.01 ent=0.631 kl=+0.191 clip=0.43 ep=1/4
+[   70] reward=-5.038 succ=   0% reached=   0% coll= 100% pi_loss=+0.559 v_loss=0.01 ent=0.586 kl=+0.446 clip=0.62 ep=1/4
+[   80] reward=-5.065 succ=   0% reached=   0% coll= 100% pi_loss=+0.651 v_loss=0.06 ent=0.808 kl=+0.090 clip=0.76 ep=1/4
+[   90] reward=-5.049 succ=   0% reached=   0% coll= 100% pi_loss=-0.022 v_loss=0.01 ent=0.746 kl=+0.108 clip=0.44 ep=1/4
+[  100] reward=-5.055 succ=   0% reached=   0% coll= 100% pi_loss=+1.116 v_loss=0.07 ent=0.540 kl=+0.180 clip=0.51 ep=1/4
+== MST baseline @100 ==
+  forest       success= 70.0%  makespan=  31.9  flowtime=  267.8  (n=30)
+  wide         success= 73.3%  makespan=  33.5  flowtime=  269.4  (n=30)
+  narrow       success= 40.0%  makespan=  47.0  flowtime=  384.8  (n=30)
+== Action policy @100 ==
+  forest       success=  0.0%  makespan=   nan  flowtime=    nan  collision= 86.7%  (n=30)
+  wide         success=  0.0%  makespan=   nan  flowtime=    nan  collision= 76.7%  (n=30)
+  narrow       success=  0.0%  makespan=   nan  flowtime=    nan  collision= 66.7%  (n=30)
+  Action policy @100 latency: encoder   1.04 ms/map (n=90), decoder  1.393 ms/step (n=8714)
+  new best action success=0.0% -> runs/rl_action_best.pt
+[  110] reward=-5.047 succ=   0% reached=   1% coll= 100% pi_loss=+0.793 v_loss=0.02 ent=0.624 kl=+0.243 clip=0.81 ep=1/4
+[  120] reward=-5.185 succ=   0% reached=   0% coll= 100% pi_loss=+1.383 v_loss=0.56 ent=0.479 kl=+0.554 clip=0.64 ep=1/4
+[  130] reward=-5.276 succ=   0% reached=   0% coll=  88% pi_loss=+0.330 v_loss=0.27 ent=0.182 kl=+0.050 clip=0.29 ep=2/4
+[  140] reward=-4.818 succ=   0% reached=   0% coll=  50% pi_loss=+0.774 v_loss=0.82 ent=0.117 kl=+0.039 clip=0.23 ep=2/4

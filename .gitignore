@@ -6,6 +6,8 @@ __pycache__/
 data/
 # experiment runs (checkpoints, logs, tensorboard)
 logs/
+# model checkpoints are large binaries -- keep them out of git history
+*.pt
 # default scratch output of scripts/simulate.py (curated demos are tracked by name)
 runs/sim.gif
 # gifs of simulated episodes
