@@ -98,48 +98,14 @@ python scripts/evaluate.py --ckpt runs/rl_embedding_best.pt --n_per_kind 12 --n_
 
 ---
 
-## `train_embedding_action_rl.py`
+## Action-map variant
 
-Per-step PPO for the **action-map** policy (`EmbeddingActionModel` = `MapEncoder` +
-`ActionDecoder`) — the sibling of `train_embedding_rl.py` where the model emits a
-per-agent move directly (no PIBT) and a collision ends the episode. Same trunk and
-PPO+GAE machinery; the policy is a **categorical** over `[UP, DOWN, LEFT, RIGHT,
-STAY]` and exploration is sampling + an entropy bonus (no `sigma`, no `oracle`).
-Saves an `arch="embedding_action"` checkpoint that `evaluate.py` auto-routes.
-
-Only the args that differ from `train_embedding_rl.py` are listed; everything else
-(`--iters`, `--batch_episodes`, `--epochs`, `--clip`, `--target_kl`, `--lam`,
-`--gamma`, `--lr`, `--size`, `--n_agents`, `--max_steps`, `--dim`, `--enc_depth`,
-`--dec_depth`, `--history`, `--hist_dim`, `--hist_depth`, `--value_coef`,
-`--eval_*`, `--log_every`, `--seed`, `--device`) is identical.
-
-| Argument | Type | Default | Description |
-| --- | --- | --- | --- |
-| `--out` | str | `runs/rl_action.pt` | Last-iterate checkpoint; best-by-eval saved to `<out>_best.pt` |
-| `--init` | str | `None` | Warm-start ckpt (must be `arch="embedding_action"`) |
-| `--entropy_coef` | float | `0.01` | Entropy-bonus weight (exploration; replaces `--sigma`) |
-| `--reward_weights` | str | `None` | YAML incl. the new `collision` key (see below) |
-| — | — | — | **No** `--oracle` / `--sigma` / `--sigma_final` (no PIBT, no Gaussian) |
-
-```bash
-# action-policy generalization run (unbuffered so the log flushes live)
-python -u scripts/train_embedding_action_rl.py --device cuda --iters 600 \
-    --size 21 --n_agents 8 --entropy_coef 0.01 \
-    --out runs/rl_action.pt > runs/train_action.log 2>&1 &
-
-python scripts/evaluate.py --ckpt runs/rl_action_best.pt --n_per_kind 12 --n_inst 5
-```
-
-> **What the "action" is.** Each step the decoder emits a `[5, H, W]` logit field;
-> the per-agent action (field indexed at the agent cell) is a categorical over
-> `[UP, DOWN, LEFT, RIGHT, STAY]`, sampled during collection and argmax at eval.
-> A collision (wall / vertex / swap — see `src/envs/action_exec.py`) terminates the
-> episode as a failure. Reward is per step (progress + time) plus terminal
-> success/reached and a **collision** penalty.
-
-> **Log line.** Adds `coll=` (fraction of the batch's episodes that ended on a
-> collision) and `ent=` (mean policy entropy). A healthy run drives `coll` down and
-> `succ` up while `ent` decays from ≈`ln 5 ≈ 1.61` as the policy sharpens.
+The dynamic **action-map** policy (`train_embedding_action_rl.py`, `evaluate.py
+--action`, the `collision` reward key, and the `arch="embedding_action"`
+checkpoint) lives on its own branch with dedicated docs —
+[`embedding_action-script_usage.md`](embedding_action-script_usage.md). It shares
+this branch's trunk and PPO machinery but replaces PIBT with a direct executor, so
+its scripts are documented separately.
 
 ---
 
@@ -152,19 +118,16 @@ auto-routing behavior on this branch.
 | Argument | Type | Default | Description |
 | --- | --- | --- | --- |
 | `--embedding` | flag | off | Evaluate the dynamic embedding (priority) model. With `--ckpt` it loads that model; without `--ckpt` it builds a **fresh (untrained)** embedding model for a baseline number |
-| `--action` | flag | off | Evaluate the dynamic action-map policy (direct moves, no PIBT). With `--ckpt` it loads that model; without `--ckpt` a **fresh (untrained)** one for a baseline. Report adds a per-kind **collision rate** |
+
+(The `--action` flag and `arch="embedding_action"` auto-routing are documented in
+[`embedding_action-script_usage.md`](embedding_action-script_usage.md).)
 
 **Auto-routing.** When `--ckpt` points at an `arch="embedding"` checkpoint,
 `evaluate.py` detects it (`isinstance(model, EmbeddingPriorityModel)`) and drives
 `benchmark.evaluate_embedding` — a per-episode `field_fn` recomputed each step
 from live occupancy (a *dynamic* field, not one static field) instead of the
-static field-provider path. An `arch="embedding_action"` checkpoint is likewise
-detected (`EmbeddingActionModel`) and driven through `benchmark.evaluate_action` —
-greedy (argmax) direct-move rollouts via `run_action_episode`, reporting
-success/makespan/flowtime **plus collision rate**. All other checkpoints and the
-MST/elapsed-PIBT baselines are unchanged, so the report is directly comparable
-across methods (MST for the action policy is a collision-free reference, not an
-apples-to-apples run).
+static field-provider path. All other checkpoints and the MST/elapsed-PIBT
+baselines are unchanged, so the report is directly comparable across methods.
 
 **Inference latency.** For the embedding model, eval also prints a mean
 encoder/decoder latency line (CUDA-synchronized), e.g.
@@ -234,14 +197,14 @@ progress: 1.0       # weight on team distance-to-goal potential shaping
 time_penalty: 0.01  # small negative every step (the makespan primitive)
 success: 5.0        # terminal bonus for solving the whole instance
 reached: 1.0        # terminal bonus x (fraction of agents at goal)
-collision: -5.0     # terminal penalty when an episode ends on a collision
-                    # (action-map policy only; unused by the PIBT priority path)
 ```
+
+(`StepRewardWeights` also carries a terminal `collision` weight used only by the
+action-map policy — see [`embedding_action-script_usage.md`](embedding_action-script_usage.md).)
 
 Per-step reward = `progress·(Φ_t − Φ_{t−1}) − time_penalty`, with `Φ =
 −mean_agent_distance` (normalized); the terminal step adds `success·solved +
-reached·(n_reached/n)` and, for the action-map policy, `collision` when the episode
-ended on a collision. Potential-based progress is policy-invariant (Ng et al.
+reached·(n_reached/n)`. Potential-based progress is policy-invariant (Ng et al.
 1999) and mainly helps the failure-heavy narrow maps; see
 [`embedding.md`](embedding.md) §3 for the reasoning (why *team* Σ-distance, why
 time-penalty is not double-counted with makespan).
@@ -267,12 +230,5 @@ extra `critic` key:
 `critic` key is ignored by eval and only needed to resume training. Unlike the
 static-field archs, this checkpoint is **not** consumed via `predict_field` (the
 field depends on live occupancy) — eval builds a per-step `field_fn` through
-`embedding_field_fn`.
-
-### Action checkpoint (`runs/rl_action*.pt`)
-
-Identical layout with `arch="embedding_action"`; `model` holds
-`EmbeddingActionModel` weights (MapEncoder + ActionDecoder) and `config` carries
-the same kwargs **plus `n_actions`** (5). `load_model` routes it to
-`build_model("embedding_action", **config)`; eval drives it through
-`benchmark.evaluate_action` (greedy direct-move rollouts, no field/PIBT).
+`embedding_field_fn`. (The sibling `arch="embedding_action"` checkpoint is
+documented in [`embedding_action-script_usage.md`](embedding_action-script_usage.md).)

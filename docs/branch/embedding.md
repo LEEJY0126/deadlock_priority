@@ -239,60 +239,15 @@ python3 scripts/evaluate.py --ckpt runs/rl_embedding_best.pt --n_per_kind 12 --n
 
 ## 8. Action-map variant (`embedding_action`)
 
-A parallel architecture that takes the priority model one step further: instead of
-a scalar priority field consumed by PIBT, the model emits a **per-cell action
-distribution** and moves agents **directly** — PIBT is gone, so the policy is now
-responsible for avoiding collisions.
+A follow-on takes this one step further: instead of a scalar priority field
+consumed by PIBT, the model emits a **per-cell action distribution** `[5, H, W]`
+over `[UP, DOWN, LEFT, RIGHT, STAY]` and moves agents **directly** — PIBT is gone,
+so the policy itself must avoid collisions (a collision ends the episode as a
+failure with a penalty). It reuses this branch's trunk (`MapEncoder` /
+`HistoryEncoder`) and PPO machinery unchanged; only the decoder head and the
+executor differ.
 
-**What changes (and what doesn't).** The trunk is shared and unchanged: the same
-`MapEncoder` (once per map) and `HistoryEncoder` (occupancy history) feed a decoder
-whose only difference is the head — `ActionDecoder` emits **5 logits per cell**,
-a categorical over `[UP, DOWN, LEFT, RIGHT, STAY]` (deltas in
-`src/envs/action_exec.py::ACTION_MOVES`). Each agent reads the 5-vector at its own
-cell (`agent_action_logits`, the same *field-then-index* contract as
-`agent_priorities`), so the policy stays agnostic to agent count/ordering and
-comms-free. Files: `src/priority/model_action.py` (`EmbeddingActionModel`).
-
-**Execution + collisions (`src/envs/action_exec.py`).** `run_action_episode` applies
-the joint move each step. A collision — (a) a next cell is a wall/OOB, (b) two next
-cells coincide (**vertex**), or (c) two adjacent agents **swap** — ends the episode
-immediately and marks it failed. Plain *following* (entering a cell another agent
-vacates the same step) is allowed. Arrived agents **stay in play and remain
-collidable** (they can even move off-goal); success is still "all agents on goals
-simultaneously". Moves are deliberately **not** masked to legal ones — learning to
-avoid walls/agents is the whole point.
-
-**Reward.** Reuses the per-step `StepRewardWeights` (progress shaping + time
-penalty + terminal success/reached) and adds one terminal term, `collision = -5.0`
-(mirrors the `+5.0` success bonus so a crash roughly cancels a solve). Applied only
-when the episode ends on a collision; a collided episode gets no success bonus.
-
-**Training (`src/train/rl_action.py`, `scripts/train_embedding_action_rl.py`).**
-Same PPO+GAE machinery as the priority path (grad-free collection → replay →
-clipped multi-epoch update with `--target_kl` early-stop), **reusing** the
-`Critic`/`make_critic` and `occ_history_window`. The policy is a `Categorical`;
-exploration is sampling + an **entropy bonus** (`--entropy_coef`) instead of the
-Gaussian `sigma`. The log adds `coll=` (collision rate) and `ent=` (entropy).
-
-**Why this is harder.** Terminate-on-first-collision makes early episodes very
-short (a random policy collides almost immediately), so credit is sparse — this is
-a genuinely harder RL problem than the priority path, where PIBT guaranteed
-liveness. Curriculum knobs: `--n_agents`, `--size`, `--entropy_coef`. MST (which
-runs through collision-free PIBT) is printed at eval as a reference upper bound, not
-an apples-to-apples comparison.
-
-```bash
-# tests
-python3 -m pytest tests/test_model_action.py tests/test_action_exec.py tests/test_rl_action.py -q
-
-# untrained action policy vs MST (collision rate is reported alongside success)
-python3 scripts/evaluate.py --action --n_per_kind 6 --n_inst 4
-
-# train; saves runs/rl_action.pt + runs/rl_action_best.pt, auto-routed by evaluate.py
-python3 -u scripts/train_embedding_action_rl.py --iters 600 --device cuda > runs/train_action.log 2>&1 &
-python3 scripts/evaluate.py --ckpt runs/rl_action_best.pt --n_per_kind 12 --n_inst 5
-```
-
-Status: the pipeline (model, executor, RL, eval, tests) is wired and smoke-tested
-end-to-end; a convergence run on fresh maps is the open item (as for the priority
-path).
+That variant has its own branch (`feature/embedding_action`) and dedicated docs:
+**[`embedding_action.md`](embedding_action.md)** (design) and
+**[`embedding_action-script_usage.md`](embedding_action-script_usage.md)** (scripts,
+flags, checkpoint format).
