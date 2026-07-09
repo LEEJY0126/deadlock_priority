@@ -64,7 +64,9 @@ def build_model(arch="unet", no_pool=False, **config):
     ``arch="unet"`` -> :class:`PriorityUNet` (honors ``no_pool``); ``"transformer"``
     -> :class:`~.model_transformer.PriorityTransformer` (kwargs in ``config``);
     ``"embedding"`` -> :class:`~.model_embedding.EmbeddingPriorityModel`, the
-    dynamic MapEncoder + PriorityDecoder split (kwargs in ``config``).
+    dynamic MapEncoder + PriorityDecoder split; ``"embedding_action"`` ->
+    :class:`~.model_action.EmbeddingActionModel`, the same trunk with a 5-way
+    action head (kwargs in ``config``).
     """
     if arch == "transformer":
         from .model_transformer import PriorityTransformer  # lazy: avoids cycle
@@ -72,6 +74,9 @@ def build_model(arch="unet", no_pool=False, **config):
     if arch == "embedding":
         from .model_embedding import EmbeddingPriorityModel  # lazy: avoids cycle
         return EmbeddingPriorityModel(**config)
+    if arch == "embedding_action":
+        from .model_action import EmbeddingActionModel  # lazy: avoids cycle
+        return EmbeddingActionModel(**config)
     if arch == "unet":
         return PriorityUNet(pool=not no_pool)
     raise ValueError(f"unknown arch {arch!r}")

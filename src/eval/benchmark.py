@@ -8,6 +8,7 @@ from __future__ import annotations
 from collections import defaultdict
 import numpy as np
 
+from ..envs.action_exec import run_action_episode
 from ..envs.grid import maze, random_forest, sample_start_goals
 from ..envs.pibt import PIBT
 from ..envs.simulator import EpisodeResult, Simulator, oracle_kwargs
@@ -99,6 +100,43 @@ def evaluate_embedding(model, instances, max_steps=400, oracle="paper",
                             **oracle_kwargs(oracle)).run(field_fn=field_fn)
             _record(agg, kind, res)
     return _finalize(agg)
+
+
+def evaluate_action(model, instances, max_steps=400, device="cpu", timer=None):
+    """Per-kind metrics for the dynamic action-map policy (no PIBT).
+
+    Greedy (argmax) rollouts through :func:`src.envs.action_exec.run_action_episode`,
+    where the model emits a per-agent move directly and a collision ends the
+    episode (failed). Reports the same success/makespan/flowtime as
+    :func:`evaluate` **plus** a per-kind collision rate (fraction of episodes that
+    ended on a collision), so the report is comparable to the MST/priority numbers
+    while surfacing how often the policy crashes. Pass an ``InferenceTimer`` to
+    record encoder/decoder latency."""
+    from ..priority.model_action import greedy_action_fn  # lazy: torch dep
+    agg = _new_agg()
+    coll = defaultdict(lambda: {"collided": 0, "n": 0})
+    for kind, g, sg in instances:
+        for starts, goals in sg:
+            action_fn = greedy_action_fn(model, g, goals, device=device, timer=timer)
+            res = run_action_episode(g, starts, goals, action_fn, max_steps=max_steps)
+            _record(agg, kind, res)
+            coll[kind]["n"] += 1
+            coll[kind]["collided"] += int(res.collided)
+    out = _finalize(agg)
+    for kind in out:
+        out[kind]["collision_rate"] = coll[kind]["collided"] / coll[kind]["n"]
+    return out
+
+
+def print_action_report(name, report):
+    """Like :func:`print_report` but appends the per-kind collision rate."""
+    print(f"== {name} ==")
+    for kind in ("forest", "wide", "narrow"):
+        if kind in report:
+            r = report[kind]
+            print(f"  {kind:12s} success={r['success_rate']*100:5.1f}%  "
+                  f"makespan={r['makespan']:6.1f}  flowtime={r['flowtime']:7.1f}  "
+                  f"collision={r.get('collision_rate', float('nan'))*100:5.1f}%  (n={r['n']})")
 
 
 def print_inference_timing(name, timer):

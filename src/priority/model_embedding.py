@@ -152,9 +152,9 @@ class PriorityDecoder(nn.Module):
         self.occ = ConvBlock(1, occ_dim)               # local context for occupancy
         self.hist_encoder = HistoryEncoder(history, hist_dim, hist_depth, heads,
                                            mlp_ratio, dropout)
-        self.hist_proj = nn.Conv2d(hist_dim, occ_dim, 1)  # history -> occ_dim chans
+        self.hist_proj = nn.Conv2d(hist_dim, hist_dim, 1)  # history projection
         # fuse embedding + occupancy + history
-        self.proj = nn.Conv2d(dim + occ_dim + occ_dim, dim, 1)
+        self.proj = nn.Conv2d(dim + occ_dim + hist_dim, dim, 1)
         self.pe_scale = nn.Parameter(torch.tensor(1.0))
         self.decoder = nn.TransformerEncoder(
             _encoder_layer(dim, heads, mlp_ratio, dropout), num_layers=depth,
@@ -171,7 +171,7 @@ class PriorityDecoder(nn.Module):
             raise ValueError(f"occ must be (B, H, W), got {tuple(occ.shape)}")
         B, D, H, W = emb.shape
         o = self.occ(occ[:, None])                     # (B, occ_dim, H, W)
-        h = self.hist_proj(self.hist_encoder(occ_history))  # (B, occ_dim, H, W)
+        h = self.hist_proj(self.hist_encoder(occ_history))  # (B, hist_dim, H, W)
         fused = self.proj(torch.cat([emb, o, h], dim=1))    # (B, D, H, W)
         tokens = fused.flatten(2).transpose(1, 2)      # (B, H*W, D)
         pe = sinusoidal_pe_2d(H, W, D, device=emb.device, dtype=tokens.dtype)

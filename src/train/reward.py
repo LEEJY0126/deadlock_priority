@@ -53,18 +53,24 @@ class StepRewardWeights:
         a per-step primitive (do not also add an episode makespan penalty).
       - ``success`` / ``reached``: terminal only -- a bonus for solving the whole
         instance plus a fraction for how many agents reached goal (partial credit).
+      - ``collision``: terminal only, for the action-map policy (:mod:`src.envs.
+        action_exec`). Applied (negative) when an episode ends on a collision;
+        mirrors ``success`` in magnitude so a collision roughly cancels a solve.
+        Unused by the PIBT priority path (which is collision-free by construction).
     """
     progress: float = 1.0
     time_penalty: float = 0.01
     success: float = 5.0
     reached: float = 1.0
+    collision: float = -5.0
 
     @classmethod
     def load(cls, path):
         with open(path) as f:
             d = yaml.safe_load(f) or {}
         known = {k: float(d[k]) for k in
-                 ("progress", "time_penalty", "success", "reached") if k in d}
+                 ("progress", "time_penalty", "success", "reached", "collision")
+                 if k in d}
         return cls(**known)
 
     def to_dict(self):
